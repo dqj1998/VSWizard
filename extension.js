@@ -45,9 +45,11 @@ function activate(context) {
 		const selectedModel = context.workspaceState.get('ollamaSelectedModel');
 		if (selectedModel) {
 			panel.webview.postMessage({ command: 'setMultimodal', multimodal: selectedModel.multimodal });
+			panel.webview.postMessage({ command: 'setModelName', modelName: selectedModel.name });
 		} else {
 			vscode.window.showInformationMessage('No Ollama model selected. Please run "List Ollama Models" first.');
 			panel.webview.postMessage({ command: 'setMultimodal', multimodal: false });
+			panel.webview.postMessage({ command: 'setModelName', modelName: 'your LLM' }); // Default placeholder
 		}
 
 
@@ -144,9 +146,11 @@ function activate(context) {
 						if (selectedModel) {
 							context.workspaceState.update('ollamaSelectedModel', selectedModel);
 							vscode.window.showInformationMessage(`Selected model: ${selectedModel.name}`);
-							// Inform the webview about the selected model's multimodal capability
+							// Inform the webview about the selected model's multimodal capability and name
 							// This requires the webview panel instance, which is not directly accessible here.
 							// A better approach is to send this info when the chat panel is created.
+							// However, we can send a message to all webviews if needed, or refactor to pass the panel.
+							// For now, we'll rely on the message sent when the panel is created/focused.
 						}
 					}
 				});

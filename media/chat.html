@@ -75,6 +75,9 @@
                     imagebutton.disabled = !message.multimodal;
                     imagebutton.textContent = message.multimodal ? 'Upload Image' : 'Image Upload Not Supported';
                     break;
+                case 'setModelName':
+                    messageinput.placeholder = `Ask ${message.modelName}...`;
+                    break;
             }
         });
 
