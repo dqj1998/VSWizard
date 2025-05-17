@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ollama Chat</title>
+    <style>
+        body { font-family: sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; }
+        #chatbox { flex-grow: 1; overflow-y: auto; padding: 10px; border-bottom: 1px solid #ccc; }
+        .message { margin-bottom: 10px; }
+        .user-message { text-align: right; }
+        .bot-message { text-align: left; }
+        #inputarea { display: flex; padding: 10px; }
+        #messageinput { flex-grow: 1; padding: 5px; margin-right: 10px; }
+        #sendbutton { padding: 5px 15px; }
+    </style>
+</head>
+<body>
+    <div id="chatbox">
+        <!-- Messages will be added here -->
+    </div>
+    <div id="inputarea">
+        <input type="text" id="messageinput" placeholder="Type your message...">
+        <input type="file" id="imageinput" accept="image/*" style="display: none;">
+        <button id="imagebutton">Upload Image</button>
+        <button id="sendbutton">Send</button>
+    </div>
+    <script>
+        const vscode = acquireVsCodeApi();
+        const chatbox = document.getElementById('chatbox');
+        const messageinput = document.getElementById('messageinput');
+        const sendbutton = document.getElementById('sendbutton');
+        const imageinput = document.getElementById('imageinput');
+        const imagebutton = document.getElementById('imagebutton');
+
+        imagebutton.addEventListener('click', () => {
+            imageinput.click();
+        });
+
+        imageinput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const base64Image = e.target.result.split(',')[1]; // Get base64 string
+                    // Display a preview of the image in the chat?
+                    // For now, just send it with the next message
+                    vscode.postMessage({ command: 'setImage', image: base64Image });
+                    vscode.window.showInformationMessage('Image selected. Send your message.');
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+
+        sendbutton.addEventListener('click', () => {
+            const message = messageinput.value;
+            if (message.trim()) {
+                addMessage(message, 'user');
+                vscode.postMessage({ command: 'sendMessage', text: message });
+                messageinput.value = '';
+            }
+        });
+
+        window.addEventListener('message', event => {
+            const message = event.data;
+            switch (message.command) {
+                case 'addMessage':
+                    addMessage(message.text, message.sender);
+                    break;
+                case 'loadHistory':
+                    message.history.forEach(msg => addMessage(msg.text, msg.sender));
+                    break;
+                case 'setMultimodal':
+                    imagebutton.disabled = !message.multimodal;
+                    imagebutton.textContent = message.multimodal ? 'Upload Image' : 'Image Upload Not Supported';
+                    break;
+            }
+        });
+
+        function addMessage(text, sender) {
+            const messageElement = document.createElement('div');
+            messageElement.classList.add('message', `${sender}-message`);
+            messageElement.textContent = text;
+            chatbox.appendChild(messageElement);
+            chatbox.scrollTop = chatbox.scrollHeight; // Auto-scroll to the latest message
+        }
+
+        // Request history when the webview is ready
+        vscode.postMessage({ command: 'getHistory' });
+    </script>
+</body>
+</html>

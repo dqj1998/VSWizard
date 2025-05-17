@@ -1,0 +1,56 @@
+{
+  "name": "vswizard",
+  "displayName": "VSWizard",
+  "description": "AI wizard for VSCode",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "vswizard.helloWorld",
+        "title": "wzd: Hello World"
+      },
+      {
+        "command": "vswizard.startChat",
+        "title": "wzd: Start Ollama Chat"
+      },
+      {
+        "command": "vswizard.listModels",
+        "title": "wzd: List Ollama Models"
+      }
+    ]
+  },
+  "configuration": {
+    "title": "VSWizard Configuration",
+    "properties": {
+      "vswizard.ollamaUrl": {
+        "type": "string",
+        "default": "http://localhost:11434",
+        "description": "The URL of the local Ollama instance."
+      }
+    }
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "pretest": "npm run lint",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "20.x",
+    "@types/vscode": "^1.100.0",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.5.2",
+    "eslint": "^9.25.1"
+  },
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  }
+}
