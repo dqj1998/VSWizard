@@ -1,6 +1,7 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the module and reference it with the alias vscode in your code below
 const vscode = require('vscode');
+const fs = require('fs'); // Import the 'fs' module
 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
@@ -9,7 +10,7 @@ const vscode = require('vscode');
  * @param {vscode.ExtensionContext} context
  */
 function activate(context) {
-
+	console.log('VSWizard extension activating...');
 	// Use the console to output diagnostic information (console.log) and errors (console.error)
 	// This line of code will only be executed once when your extension is activated
 	console.log('Congratulations, your extension "vswizard" is now active!');
@@ -26,111 +27,16 @@ function activate(context) {
 
 	context.subscriptions.push(disposable);
 
-	const chatCommand = vscode.commands.registerCommand('vswizard.startChat', function () {
-		const panel = vscode.window.createWebviewPanel(
-			'ollamaChat', // Identifies the type of the webview. Used internally
-			'Ollama Chat', // Title of the panel displayed to the user
-			vscode.ViewColumn.One, // Editor column to show the new panel in.
-			{
-				enableScripts: true, // Enable scripts in the webview
-				localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')] // Allow access to the media directory
-			}
-		);
-
-		// Load chat history
-		const historyKey = 'ollamaChatHistory';
-		let chatHistory = context.workspaceState.get(historyKey, []);
-
-		// Get the selected model and inform the webview
-		const selectedModel = context.workspaceState.get('ollamaSelectedModel');
-		if (selectedModel) {
-			panel.webview.postMessage({ command: 'setMultimodal', multimodal: selectedModel.multimodal });
-			panel.webview.postMessage({ command: 'setModelName', modelName: selectedModel.name });
-		} else {
-			vscode.window.showInformationMessage('No Ollama model selected. Please run "List Ollama Models" first.');
-			panel.webview.postMessage({ command: 'setMultimodal', multimodal: false });
-			panel.webview.postMessage({ command: 'setModelName', modelName: 'your LLM' }); // Default placeholder
-		}
-
-
-		// Send history to webview
-		panel.webview.onDidReceiveMessage(message => {
-			if (message.command === 'getHistory') {
-				panel.webview.postMessage({ command: 'loadHistory', history: chatHistory });
-			}
-		});
-
-
-		// Get the HTML content for the webview
-		const htmlPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'chat.html');
-		const htmlContent = require('fs').readFileSync(htmlPath.fsPath, 'utf8');
-		panel.webview.html = htmlContent;
-
-		// Handle messages from the webview
-		panel.webview.onDidReceiveMessage(
-			async message => {
-				switch (message.command) {
-					case 'sendMessage':
-						const ollamaUrl = vscode.workspace.getConfiguration().get('vswizard.ollamaUrl') || 'http://localhost:11434';
-						const userMessage = { text: message.text, sender: 'user' };
-						chatHistory.push(userMessage);
-						context.workspaceState.update(historyKey, chatHistory);
-
-						try {
-							const response = await sendMessageToOllama(ollamaUrl, message.text);
-							const botMessage = { text: response, sender: 'bot' };
-							chatHistory.push(botMessage);
-							context.workspaceState.update(historyKey, chatHistory);
-							panel.webview.postMessage({ command: 'addMessage', text: response, sender: 'bot' });
-						} catch (error) {
-							console.error('Error details:', error); // Log the full error object
-							const selectedModel = context.workspaceState.get('ollamaSelectedModel');
-							console.error('Selected model:', selectedModel); // Log the selected model
-							vscode.window.showErrorMessage(`Error communicating with Ollama: ${error.message}. Check VS Code output for details.`);
-							const errorMessage = { text: `Error: ${error.message}`, sender: 'bot' };
-							chatHistory.push(errorMessage);
-							context.workspaceState.update(historyKey, chatHistory);
-							panel.webview.postMessage({ command: 'addMessage', text: `Error: ${error.message}`, sender: 'bot' });
-						}
-						break;
-				}
-			},
-			undefined,
-			context.subscriptions
-		);
+	const startChatDisposable = vscode.commands.registerCommand('vswizard.startChat', function () {
+		vscode.commands.executeCommand('workbench.view.extension.vswizard-sidebar');
 	});
+	context.subscriptions.push(startChatDisposable);
 
-	async function sendMessageToOllama(ollamaUrl, prompt, image = null) {
-		const selectedModel = context.workspaceState.get('ollamaSelectedModel');
-		const model = selectedModel ? selectedModel.name : "llama2"; // Use selected model or default
-		const requestBody = {
-			model: model,
-			prompt: prompt,
-			stream: false // For simplicity, not using streaming for now
-		};
-
-		if (image) {
-			requestBody.images = [image];
-		}
-
-		const response = await fetch(`${ollamaUrl || 'http://localhost:11434'}/api/generate`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-			},
-			body: JSON.stringify(requestBody),
-		});
-
-		if (!response.ok) {
-			throw new Error(`HTTP error! status: ${response.status}`);
-		}
-
-		/** @type {{ response: string }} */
-		const data = /** @type {{ response: string }} */ (await response.json());
-		return data.response;
-	}
-
-	context.subscriptions.push(chatCommand);
+	// Register the chat view provider
+	const chatViewProvider = new ChatViewProvider(context.extensionUri, context.workspaceState);
+	context.subscriptions.push(
+		vscode.window.registerWebviewViewProvider('vswizard-chat', chatViewProvider)
+	);
 
 	const listModelsCommand = vscode.commands.registerCommand('vswizard.listModels', async function () {
 		const ollamaUrl = vscode.workspace.getConfiguration().get('vswizard.ollamaUrl') || 'http://localhost:11434';
@@ -163,6 +69,121 @@ function activate(context) {
 	});
 
 	context.subscriptions.push(listModelsCommand);
+}
+
+	// WebviewViewProvider for the chat view
+	class ChatViewProvider {
+	/**
+	 * @param {vscode.Uri} extensionUri
+	 * @param {vscode.Memento} workspaceState
+	 */
+	constructor(extensionUri, workspaceState) {
+		this._extensionUri = extensionUri;
+		this._workspaceState = workspaceState;
+	}
+
+	/**
+	 * @param {vscode.WebviewView} webviewView
+	 * @param {vscode.WebviewViewResolveContext} context
+	 * @param {vscode.CancellationToken} _token
+	 */
+	resolveWebviewView(webviewView, context, _token) {
+		console.log('resolveWebviewView called for vswizard-chat');
+		webviewView.webview.options = {
+			// Allow scripts in the webview
+			enableScripts: true,
+			localResourceRoots: [vscode.Uri.joinPath(this._extensionUri, 'media')]
+		};
+
+		// Get the HTML content for the webview
+		const htmlPath = vscode.Uri.joinPath(this._extensionUri, 'media', 'chat.html');
+		const htmlContent = fs.readFileSync(htmlPath.fsPath, 'utf8');
+		webviewView.webview.html = htmlContent;
+
+		// Load chat history
+		const historyKey = 'ollamaChatHistory';
+		let chatHistory = this._workspaceState.get(historyKey, []);
+
+		// Get the selected model and inform the webview
+		const selectedModel = this._workspaceState.get('ollamaSelectedModel');
+		if (selectedModel) {
+			webviewView.webview.postMessage({ command: 'setMultimodal', multimodal: selectedModel.multimodal });
+			webviewView.webview.postMessage({ command: 'setModelName', modelName: selectedModel.name });
+		} else {
+			vscode.window.showInformationMessage('No Ollama model selected. Please run "List Ollama Models" first.');
+			webviewView.webview.postMessage({ command: 'setMultimodal', multimodal: false });
+			webviewView.webview.postMessage({ command: 'setModelName', modelName: 'your LLM' }); // Default placeholder
+		}
+
+		// Send history to webview
+		webviewView.webview.onDidReceiveMessage(message => {
+			if (message.command === 'getHistory') {
+				webviewView.webview.postMessage({ command: 'loadHistory', history: chatHistory });
+			}
+		});
+
+		// Handle messages from the webview
+		webviewView.webview.onDidReceiveMessage(
+			async message => {
+				switch (message.command) {
+					case 'sendMessage':
+						const ollamaUrl = vscode.workspace.getConfiguration().get('vswizard.ollamaUrl') || 'http://localhost:11434';
+						const userMessage = { text: message.text, sender: 'user' };
+						chatHistory.push(userMessage);
+						this._workspaceState.update(historyKey, chatHistory);
+
+						try {
+							const response = await sendMessageToOllama(ollamaUrl, message.text, this._workspaceState); // Pass workspaceState
+							const botMessage = { text: response, sender: 'bot' };
+							chatHistory.push(botMessage);
+							this._workspaceState.update(historyKey, chatHistory);
+							webviewView.webview.postMessage({ command: 'addMessage', text: response, sender: 'bot' });
+						} catch (error) {
+							console.error('Error details:', error); // Log the full error object
+							const selectedModel = this._workspaceState.get('ollamaSelectedModel');
+							console.error('Selected model:', selectedModel); // Log the selected model
+							vscode.window.showErrorMessage(`Error communicating with Ollama: ${error.message}. Check VS Code output for details.`);
+							const errorMessage = { text: `Error: ${error.message}`, sender: 'bot' };
+							chatHistory.push(errorMessage);
+							this._workspaceState.update(historyKey, chatHistory);
+							webviewView.webview.postMessage({ command: 'addMessage', text: `Error: ${error.message}`, sender: 'bot' });
+						}
+						break;
+				}
+			}
+		);
+	}
+}
+
+
+async function sendMessageToOllama(ollamaUrl, prompt, workspaceState, image = null) { // Add workspaceState parameter
+	const selectedModel = workspaceState.get('ollamaSelectedModel'); // Use the passed workspaceState
+	const model = selectedModel ? selectedModel.name : "llama2"; // Use selected model or default
+	const requestBody = {
+		model: model,
+		prompt: prompt,
+		stream: false // For simplicity, not using streaming for now
+	};
+
+	if (image) {
+		requestBody.images = [image];
+	}
+
+	const response = await fetch(`${ollamaUrl || 'http://localhost:11434'}/api/generate`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+		},
+		body: JSON.stringify(requestBody),
+	});
+
+	if (!response.ok) {
+		throw new Error(`HTTP error! status: ${response.status}`);
+	}
+
+	/** @type {{ response: string }} */
+	const data = /** @type {{ response: string }} */ (await response.json());
+	return data.response;
 }
 
 async function listOllamaModels(ollamaUrl) {

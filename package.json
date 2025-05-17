@@ -13,7 +13,9 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onView:vswizard-chat"
+  ],
   "main": "./extension.js",
   "contributes": {
     "commands": [
@@ -29,7 +31,25 @@
         "command": "vswizard.listModels",
         "title": "wzd: List Ollama Models"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vswizard-sidebar",
+          "title": "VSWizard",
+          "icon": "media/vswizard.png"
+        }
+      ]
+    },
+    "views": {
+      "vswizard-sidebar": [
+        {
+          "id": "vswizard-chat",
+          "name": "VSWizard Chat",
+          "type": "webview"
+        }
+      ]
+    }
   },
   "configuration": {
     "title": "VSWizard Configuration",
