@@ -3,6 +3,10 @@
   "displayName": "VSWizard",
   "description": "AI wizard for VSCode",
   "version": "0.0.1",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dqj/VSWizard.git"
+  },
   "engines": {
     "vscode": "^1.100.0"
   },
