@@ -30,6 +30,10 @@
       {
         "command": "vswizard.listModels",
         "title": "wzd: List Ollama Models"
+      },
+      {
+        "command": "vswizard.clearLLMSelection",
+        "title": "wzd: Clear Ollama Model Selection(For debugging)"
       }
     ],
     "viewsContainers": {
@@ -46,7 +50,8 @@
         {
           "id": "vswizard-chat",
           "name": "VSWizard Chat",
-          "type": "webview"
+          "type": "webview",
+          "icon": "media/vswizard.png"
         }
       ]
     }

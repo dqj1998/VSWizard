@@ -83,18 +83,35 @@
             sendbutton.onclick = originalSendHandler;
         }
 
-        // Save the original send handler
-        originalSendHandler = function() {
-            const message = messageinput.value;
-            if (message.trim()) {
-                addMessage(message, 'user');
-                vscode.postMessage({ command: 'sendMessage', text: message });
-                messageinput.value = '';
-                setSendButtonToStop();
-                isStreaming = true;
-            }
-        };
-        sendbutton.onclick = originalSendHandler;
+        let currentModelName = null;
+
+// Save the original send handler
+originalSendHandler = function() {
+    if (!currentModelName || currentModelName === '<Select LLM please>') {
+        vscode.postMessage({ command: 'listOllamaModels' });
+        return;
+    }
+    const message = messageinput.value;
+    if (message.trim()) {
+        addMessage(message, 'user');
+        vscode.postMessage({ command: 'sendMessage', text: message });
+        messageinput.value = '';
+        setSendButtonToStop();
+        isStreaming = true;
+    }
+};
+sendbutton.onclick = originalSendHandler;
+
+window.addEventListener('message', event => {
+    const message = event.data;
+    switch (message.command) {
+        case 'setModelName':
+            currentModelName = message.modelName;
+            messageinput.placeholder = `Ask ${message.modelName}...`;
+            break;
+        // other cases handled below
+    }
+});
 
         // Streaming support
         let streamingBotMessage = null;

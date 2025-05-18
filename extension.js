@@ -9,6 +9,8 @@ const fs = require('fs'); // Import the 'fs' module
 /**
  * @param {vscode.ExtensionContext} context
  */
+let chatViewProviderInstance = null;
+
 function activate(context) {
 	console.log('VSWizard extension activating...');
 	// Use the console to output diagnostic information (console.log) and errors (console.error)
@@ -33,9 +35,9 @@ function activate(context) {
 	context.subscriptions.push(startChatDisposable);
 
 	// Register the chat view provider
-	const chatViewProvider = new ChatViewProvider(context.extensionUri, context.workspaceState);
+	chatViewProviderInstance = new ChatViewProvider(context.extensionUri, context.workspaceState);
 	context.subscriptions.push(
-		vscode.window.registerWebviewViewProvider('vswizard-chat', chatViewProvider)
+		vscode.window.registerWebviewViewProvider('vswizard-chat', chatViewProviderInstance)
 	);
 
 	const listModelsCommand = vscode.commands.registerCommand('vswizard.listModels', async function () {
@@ -53,10 +55,10 @@ function activate(context) {
 							context.workspaceState.update('ollamaSelectedModel', selectedModel);
 							vscode.window.showInformationMessage(`Selected model: ${selectedModel.name}`);
 							// Inform the webview about the selected model's multimodal capability and name
-							// This requires the webview panel instance, which is not directly accessible here.
-							// A better approach is to send this info when the chat panel is created.
-							// However, we can send a message to all webviews if needed, or refactor to pass the panel.
-							// For now, we'll rely on the message sent when the panel is created/focused.
+							if (chatViewProviderInstance && chatViewProviderInstance._webviewView) {
+								chatViewProviderInstance._webviewView.webview.postMessage({ command: 'setMultimodal', multimodal: selectedModel.multimodal });
+								chatViewProviderInstance._webviewView.webview.postMessage({ command: 'setModelName', modelName: selectedModel.name });
+							}
 						}
 					}
 				});
@@ -69,6 +71,27 @@ function activate(context) {
 	});
 
 	context.subscriptions.push(listModelsCommand);
+
+	// Command to clear the selected LLM (for testing "no LLM selected" state)
+	const clearLLMSelectionCommand = vscode.commands.registerCommand('vswizard.clearLLMSelection', async function () {
+		context.workspaceState.update('ollamaSelectedModel', undefined);
+		// Find all visible webviews and send the clear message
+		const chatViews = vscode.window.tabGroups.all
+			.flatMap(group => group.tabs)
+			.filter(tab => tab.input && typeof tab.input === 'object' && 'viewType' in tab.input && tab.input.viewType === 'vswizard-chat');
+		// Fallback: send to all webview views if possible
+		// This assumes only one chatViewProvider instance
+		if (typeof chatViewProviderInstance !== 'undefined' && chatViewProviderInstance._webviewView) {
+			// @ts-ignore
+			chatViewProviderInstance._webviewView.webview.postMessage({ command: 'setModelName', modelName: '' });
+		} else {
+			// If we can't access the webview directly, show info to reload the chat panel
+			vscode.window.showInformationMessage('LLM selection cleared. Please reload the chat panel to see the effect.');
+		}
+		// After clearing, show the model list popup
+		await vscode.commands.executeCommand('vswizard.listModels');
+	});
+	context.subscriptions.push(clearLLMSelectionCommand);
 }
 
 	// WebviewViewProvider for the chat view
@@ -89,6 +112,7 @@ function activate(context) {
 	 */
 	resolveWebviewView(webviewView, context, _token) {
 		this._abortController = null; // Track the current AbortController per webview
+		this._webviewView = webviewView; // Store the webviewView instance for later use
 		console.log('resolveWebviewView called for vswizard-chat');
 		webviewView.webview.options = {
 			// Allow scripts in the webview
@@ -118,7 +142,7 @@ function activate(context) {
 		} else {
 			vscode.window.showInformationMessage('No Ollama model selected. Please run "List Ollama Models" first.');
 			webviewView.webview.postMessage({ command: 'setMultimodal', multimodal: false });
-			webviewView.webview.postMessage({ command: 'setModelName', modelName: 'your LLM' }); // Default placeholder
+			webviewView.webview.postMessage({ command: 'setModelName', modelName: '<Select LLM please>' }); // Default placeholder
 		}
 
 		// Send history to webview
@@ -181,6 +205,11 @@ function activate(context) {
 							this._abortController.abort();
 							this._abortController = null;
 						}
+						break;
+					}
+					case 'listOllamaModels': {
+						// Trigger the listModels command to show the model selection popup
+						await vscode.commands.executeCommand('vswizard.listModels');
 						break;
 					}
 				}
