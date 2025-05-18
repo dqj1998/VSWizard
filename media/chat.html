@@ -8,12 +8,26 @@
         body { font-family: sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; }
         #chatbox { flex-grow: 1; overflow-y: auto; padding: 10px; border-bottom: 1px solid #ccc; }
         .message { margin-bottom: 10px; }
-        .user-message { text-align: right; }
+        .user-message {
+            text-align: right;
+            margin-left: auto; /* Push the bubble to the right */
+            max-width: 80%; /* Limit bubble width */
+            background-color: #333; /* Light green background for user messages */
+            padding: 3px 6px;
+            border-radius: 6px;
+            margin-bottom: 6px;
+            word-wrap: break-word; /* Prevent long words from overflowing */
+        }
+        .user-message div { /* Style the content inside the bubble */
+            text-align: left;
+            color: #fff; /* Set text color to a dark gray */
+        }
         .bot-message { text-align: left; }
         #inputarea { display: flex; padding: 10px; }
         #messageinput { flex-grow: 1; padding: 5px; margin-right: 10px; }
         #sendbutton { padding: 5px 15px; }
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
     <div id="chatbox">
@@ -34,6 +48,9 @@
         const imageinput = document.getElementById('imageinput');
         const imagebutton = document.getElementById('imagebutton');
 
+        let isStreaming = false;
+        let originalSendHandler = null;
+
         imagebutton.addEventListener('click', () => {
             imageinput.click();
         });
@@ -44,8 +61,6 @@
                 const reader = new FileReader();
                 reader.onload = (e) => {
                     const base64Image = e.target.result.split(',')[1]; // Get base64 string
-                    // Display a preview of the image in the chat?
-                    // For now, just send it with the next message
                     vscode.postMessage({ command: 'setImage', image: base64Image });
                     vscode.window.showInformationMessage('Image selected. Send your message.');
                 };
@@ -53,21 +68,49 @@
             }
         });
 
+        function setSendButtonToStop() {
+            sendbutton.textContent = 'Stop';
+            sendbutton.disabled = false;
+            sendbutton.onclick = () => {
+                vscode.postMessage({ command: 'stop' });
+                sendbutton.disabled = true; // Prevent multiple stop requests
+            };
+        }
 
-        sendbutton.addEventListener('click', () => {
+        function setSendButtonToSend() {
+            sendbutton.textContent = 'Send';
+            sendbutton.disabled = false;
+            sendbutton.onclick = originalSendHandler;
+        }
+
+        // Save the original send handler
+        originalSendHandler = function() {
             const message = messageinput.value;
             if (message.trim()) {
                 addMessage(message, 'user');
                 vscode.postMessage({ command: 'sendMessage', text: message });
                 messageinput.value = '';
+                setSendButtonToStop();
+                isStreaming = true;
             }
-        });
+        };
+        sendbutton.onclick = originalSendHandler;
+
+        // Streaming support
+        let streamingBotMessage = null;
+        let streamingBotText = '';
 
         window.addEventListener('message', event => {
             const message = event.data;
             switch (message.command) {
                 case 'addMessage':
                     addMessage(message.text, message.sender);
+                    break;
+                case 'addChunk':
+                    addChunk(message.text, message.sender);
+                    break;
+                case 'streamDone':
+                    finalizeStream();
                     break;
                 case 'loadHistory':
                     message.history.forEach(msg => addMessage(msg.text, msg.sender));
@@ -85,9 +128,29 @@
         function addMessage(text, sender) {
             const messageElement = document.createElement('div');
             messageElement.classList.add('message', `${sender}-message`);
-            messageElement.textContent = text;
+            messageElement.innerHTML = marked.parse(text); // Use marked to parse Markdown to HTML
             chatbox.appendChild(messageElement);
             chatbox.scrollTop = chatbox.scrollHeight; // Auto-scroll to the latest message
+        }
+
+        function addChunk(text, sender) {
+            if (sender !== 'bot') return;
+            if (!streamingBotMessage) {
+                streamingBotMessage = document.createElement('div');
+                streamingBotMessage.classList.add('message', 'bot-message');
+                chatbox.appendChild(streamingBotMessage);
+                streamingBotText = '';
+            }
+            streamingBotText += text;
+            streamingBotMessage.innerHTML = marked.parse(streamingBotText);
+            chatbox.scrollTop = chatbox.scrollHeight;
+        }
+
+        function finalizeStream() {
+            streamingBotMessage = null;
+            streamingBotText = '';
+            isStreaming = false;
+            setSendButtonToSend();
         }
 
         // Request history when the webview is ready

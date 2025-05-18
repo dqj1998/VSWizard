@@ -88,6 +88,7 @@ function activate(context) {
 	 * @param {vscode.CancellationToken} _token
 	 */
 	resolveWebviewView(webviewView, context, _token) {
+		this._abortController = null; // Track the current AbortController per webview
 		console.log('resolveWebviewView called for vswizard-chat');
 		webviewView.webview.options = {
 			// Allow scripts in the webview
@@ -97,7 +98,12 @@ function activate(context) {
 
 		// Get the HTML content for the webview
 		const htmlPath = vscode.Uri.joinPath(this._extensionUri, 'media', 'chat.html');
-		const htmlContent = fs.readFileSync(htmlPath.fsPath, 'utf8');
+		let htmlContent = fs.readFileSync(htmlPath.fsPath, 'utf8');
+
+		// Fix logo path for webview
+		const logoUri = webviewView.webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'vswizard.png'));
+		htmlContent = htmlContent.replace('./vswizard.png', logoUri.toString());
+
 		webviewView.webview.html = htmlContent;
 
 		// Load chat history
@@ -126,29 +132,57 @@ function activate(context) {
 		webviewView.webview.onDidReceiveMessage(
 			async message => {
 				switch (message.command) {
-					case 'sendMessage':
+					case 'sendMessage': {
 						const ollamaUrl = vscode.workspace.getConfiguration().get('vswizard.ollamaUrl') || 'http://localhost:11434';
 						const userMessage = { text: message.text, sender: 'user' };
 						chatHistory.push(userMessage);
 						this._workspaceState.update(historyKey, chatHistory);
 
+						// Abort any previous stream before starting a new one
+						if (this._abortController) {
+							this._abortController.abort();
+						}
+						this._abortController = new AbortController();
+
 						try {
-							const response = await sendMessageToOllama(ollamaUrl, message.text, this._workspaceState); // Pass workspaceState
-							const botMessage = { text: response, sender: 'bot' };
-							chatHistory.push(botMessage);
-							this._workspaceState.update(historyKey, chatHistory);
-							webviewView.webview.postMessage({ command: 'addMessage', text: response, sender: 'bot' });
+							// Pass abortController to sendMessageToOllama
+							const response = await sendMessageToOllama(
+								ollamaUrl,
+								message.text,
+								this._workspaceState,
+								webviewView,
+								chatHistory,
+								historyKey,
+								null,
+								this._abortController.signal
+							);
+							// The history update and final message sending are now handled within sendMessageToOllama
 						} catch (error) {
-							console.error('Error details:', error); // Log the full error object
-							const selectedModel = this._workspaceState.get('ollamaSelectedModel');
-							console.error('Selected model:', selectedModel); // Log the selected model
-							vscode.window.showErrorMessage(`Error communicating with Ollama: ${error.message}. Check VS Code output for details.`);
-							const errorMessage = { text: `Error: ${error.message}`, sender: 'bot' };
-							chatHistory.push(errorMessage);
-							this._workspaceState.update(historyKey, chatHistory);
-							webviewView.webview.postMessage({ command: 'addMessage', text: `Error: ${error.message}`, sender: 'bot' });
+							if (error.name === 'AbortError') {
+								// Stream was aborted by user
+								webviewView.webview.postMessage({ command: 'streamDone', sender: 'bot' });
+							} else {
+								console.error('Error details:', error); // Log the full error object
+								const selectedModel = this._workspaceState.get('ollamaSelectedModel');
+								console.error('Selected model:', selectedModel); // Log the selected model
+								vscode.window.showErrorMessage(`Error communicating with Ollama: ${error.message}. Check VS Code output for details.`);
+								const errorMessage = { text: `Error: ${error.message}`, sender: 'bot' };
+								chatHistory.push(errorMessage);
+								this._workspaceState.update(historyKey, chatHistory);
+								webviewView.webview.postMessage({ command: 'addMessage', text: `Error: ${error.message}`, sender: 'bot' });
+							}
+						} finally {
+							this._abortController = null;
 						}
 						break;
+					}
+					case 'stop': {
+						if (this._abortController) {
+							this._abortController.abort();
+							this._abortController = null;
+						}
+						break;
+					}
 				}
 			}
 		);
@@ -156,13 +190,22 @@ function activate(context) {
 }
 
 
-async function sendMessageToOllama(ollamaUrl, prompt, workspaceState, image = null) { // Add workspaceState parameter
-	const selectedModel = workspaceState.get('ollamaSelectedModel'); // Use the passed workspaceState
-	const model = selectedModel ? selectedModel.name : "llama2"; // Use selected model or default
+async function sendMessageToOllama(
+	ollamaUrl,
+	prompt,
+	workspaceState,
+	webviewView,
+	chatHistory,
+	historyKey,
+	image = null,
+	abortSignal = undefined
+) {
+	const selectedModel = workspaceState.get('ollamaSelectedModel');
+	const model = selectedModel ? selectedModel.name : "llama2";
 	const requestBody = {
 		model: model,
 		prompt: prompt,
-		stream: false // For simplicity, not using streaming for now
+		stream: true
 	};
 
 	if (image) {
@@ -175,15 +218,56 @@ async function sendMessageToOllama(ollamaUrl, prompt, workspaceState, image = nu
 			'Content-Type': 'application/json',
 		},
 		body: JSON.stringify(requestBody),
+		signal: abortSignal
 	});
 
 	if (!response.ok) {
 		throw new Error(`HTTP error! status: ${response.status}`);
 	}
 
-	/** @type {{ response: string }} */
-	const data = /** @type {{ response: string }} */ (await response.json());
-	return data.response;
+	const reader = response.body.getReader();
+	const decoder = new TextDecoder();
+	let buffer = '';
+	let fullResponse = '';
+
+	while (true) {
+		const { value, done } = await reader.read();
+		if (done) break;
+
+		buffer += decoder.decode(value, { stream: true });
+
+		// Process complete JSON objects in the buffer
+		while (true) {
+			const newlineIndex = buffer.indexOf('\n');
+			if (newlineIndex === -1) break;
+
+			const jsonLine = buffer.substring(0, newlineIndex);
+			buffer = buffer.substring(newlineIndex + 1);
+
+			try {
+				const data = JSON.parse(jsonLine);
+				if (data.response) {
+					fullResponse += data.response;
+					webviewView.webview.postMessage({ command: 'addChunk', text: data.response, sender: 'bot' });
+				}
+				if (data.done) {
+					webviewView.webview.postMessage({ command: 'streamDone', sender: 'bot' });
+					const botMessage = { text: fullResponse, sender: 'bot' };
+					chatHistory.push(botMessage);
+					workspaceState.update(historyKey, chatHistory);
+					return fullResponse;
+				}
+			} catch (error) {
+				console.error('Error parsing JSON stream:', error);
+			}
+		}
+	}
+
+	console.warn('Stream ended without a done signal.');
+	const botMessage = { text: fullResponse, sender: 'bot' };
+	chatHistory.push(botMessage);
+	workspaceState.update(historyKey, chatHistory);
+	return fullResponse;
 }
 
 async function listOllamaModels(ollamaUrl) {
