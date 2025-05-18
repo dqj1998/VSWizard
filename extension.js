@@ -3,6 +3,13 @@
 const vscode = require('vscode');
 const fs = require('fs'); // Import the 'fs' module
 
+// Constants for workspace state keys
+const OLLAMA_PARTIAL_RESPONSE = 'ollamaPartialResponse';
+const OLLAMA_CHAT_HISTORY = 'ollamaChatHistory';
+const OLLAMA_SELECTED_MODEL = 'ollamaSelectedModel';
+const VSWIZARD_SESSIONS = 'vswizardSessions';
+const VSWIZARD_CURRENT_SESSION_ID = 'vswizardCurrentSessionId';
+
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
 
@@ -10,6 +17,58 @@ const fs = require('fs'); // Import the 'fs' module
  * @param {vscode.ExtensionContext} context
  */
 let chatViewProviderInstance = null;
+let currentSessionId = null; // Track the current session
+
+function getSessions(workspaceState) {
+	return workspaceState.get(VSWIZARD_SESSIONS, []);
+}
+
+function saveSessions(workspaceState, sessions) {
+	workspaceState.update(VSWIZARD_SESSIONS, sessions);
+}
+
+function getCurrentSession(workspaceState) {
+	const sessions = getSessions(workspaceState);
+	return sessions.find(s => s.id === currentSessionId);
+}
+
+function setCurrentSession(workspaceState, sessionId) {
+	currentSessionId = sessionId;
+	workspaceState.update(VSWIZARD_CURRENT_SESSION_ID, sessionId);
+}
+
+function loadCurrentSessionId(workspaceState) {
+	currentSessionId = workspaceState.get(VSWIZARD_CURRENT_SESSION_ID, null);
+}
+
+async function generateSessionName(ollamaUrl, history, model) {
+	// Use LLM to generate a session name from history, max 30 chars
+	const prompt =
+		"Summarize this chat in a short title (max 30 chars):\n" +
+		history.map(m => `${m.sender === 'user' ? 'User' : 'Bot'}: ${m.text}`).join('\n');
+	const requestBody = {
+		model: model,
+		prompt: prompt,
+		stream: false
+	};
+	const response = await fetch(`${ollamaUrl}/api/generate`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(requestBody)
+	});
+	if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+	const data = await response.json();
+	let name = '';
+	if (typeof data === 'object' && data !== null) {
+		if ('response' in data) {
+			name = String(data.response).trim();
+		} else if ('text' in data) {
+			name = String(data.text).trim();
+		}
+	}
+	if (name.length > 30) name = name.slice(0, 30);
+	return name || 'Untitled Session';
+}
 
 function activate(context) {
 	console.log('VSWizard extension activating...');
@@ -52,7 +111,7 @@ function activate(context) {
 					if (selectedModelName) {
 						const selectedModel = models.find(model => model.name === selectedModelName);
 						if (selectedModel) {
-							context.workspaceState.update('ollamaSelectedModel', selectedModel);
+							context.workspaceState.update(OLLAMA_SELECTED_MODEL, selectedModel);
 							vscode.window.showInformationMessage(`Selected model: ${selectedModel.name}`);
 							// Inform the webview about the selected model's multimodal capability and name
 							if (chatViewProviderInstance && chatViewProviderInstance._webviewView) {
@@ -74,7 +133,7 @@ function activate(context) {
 
 	// Command to clear the selected LLM (for testing "no LLM selected" state)
 	const clearLLMSelectionCommand = vscode.commands.registerCommand('vswizard.clearLLMSelection', async function () {
-		context.workspaceState.update('ollamaSelectedModel', undefined);
+		context.workspaceState.update(OLLAMA_SELECTED_MODEL, undefined);
 		// Find all visible webviews and send the clear message
 		const chatViews = vscode.window.tabGroups.all
 			.flatMap(group => group.tabs)
@@ -92,6 +151,66 @@ function activate(context) {
 		await vscode.commands.executeCommand('vswizard.listModels');
 	});
 	context.subscriptions.push(clearLLMSelectionCommand);
+
+	loadCurrentSessionId(context.workspaceState);
+
+	// New Session command
+	const newSessionCommand = vscode.commands.registerCommand('vswizard.newSession', async function () {
+		const ollamaUrl = vscode.workspace.getConfiguration().get('vswizard.ollamaUrl') || 'http://localhost:11434';
+		const selectedModel = context.workspaceState.get(OLLAMA_SELECTED_MODEL);
+		const model = selectedModel ? selectedModel.name : 'llama2';
+		const sessions = getSessions(context.workspaceState);
+		const newId = 'session-' + Date.now();
+	const newSession = { id: newId, name: 'New Session', history: [] };
+	sessions.push(newSession);
+	saveSessions(context.workspaceState, sessions);
+	setCurrentSession(context.workspaceState, newId);
+	context.workspaceState.update(OLLAMA_CHAT_HISTORY, []);
+	if (chatViewProviderInstance) {
+		chatViewProviderInstance._chatHistory = [];
+	}
+	if (chatViewProviderInstance && chatViewProviderInstance._webviewView) {
+		chatViewProviderInstance._webviewView.webview.postMessage({ command: 'clearHistory' });
+		chatViewProviderInstance._webviewView.webview.postMessage({ command: 'loadHistory', history: [] });
+		chatViewProviderInstance._webviewView.webview.postMessage({ command: 'resetInput' });
+	}
+	vscode.window.showInformationMessage('Started a new chat session.');
+	});
+	context.subscriptions.push(newSessionCommand);
+
+	// List History command
+	const listHistoryCommand = vscode.commands.registerCommand('vswizard.listHistory', async function () {
+		try {
+			const sessions = getSessions(context.workspaceState);
+			if (!sessions.length) {
+				vscode.window.showInformationMessage('No chat sessions found.');
+				return;
+			}
+			const picks = sessions.map(s => ({ label: s.name, id: s.id }));
+			const selected = await vscode.window.showQuickPick(picks.map(p => p.label), { placeHolder: 'Select a chat session to load' });
+			if (selected) {
+				const session = sessions.find(s => s.name === selected);
+				if (session) {
+					setCurrentSession(context.workspaceState, session.id);
+					context.workspaceState.update(OLLAMA_CHAT_HISTORY, session.history);
+					if (chatViewProviderInstance) {
+						chatViewProviderInstance._chatHistory = session.history;
+					}
+					if (chatViewProviderInstance?._webviewView) {
+						chatViewProviderInstance._webviewView.webview.postMessage({ command: 'loadHistory', history: session.history });
+						chatViewProviderInstance._webviewView.webview.postMessage({ command: 'resetInput' });
+					}
+					// Also update the local chatHistory variable in the webview provider to avoid stale history
+					chatViewProviderInstance._chatHistory = session.history;
+				}
+				vscode.window.showInformationMessage(`Loaded session: ${session.name}`);
+			}
+		} catch (error) {
+			console.error('Error loading chat history:', error);
+			vscode.window.showErrorMessage('Failed to load chat history.');
+		}
+	});
+	context.subscriptions.push(listHistoryCommand);
 }
 
 	// WebviewViewProvider for the chat view
@@ -130,12 +249,19 @@ function activate(context) {
 
 		webviewView.webview.html = htmlContent;
 
-		// Load chat history
-		const historyKey = 'ollamaChatHistory';
-		let chatHistory = this._workspaceState.get(historyKey, []);
+		// Load chat history for current session
+		loadCurrentSessionId(this._workspaceState);
+		let chatHistory = [];
+		const sessions = getSessions(this._workspaceState);
+		if (currentSessionId) {
+			const session = sessions.find(s => s.id === currentSessionId);
+			if (session) chatHistory = session.history;
+		}
+		this._workspaceState.update(OLLAMA_CHAT_HISTORY, chatHistory);
+		this._chatHistory = chatHistory;
 
 		// Get the selected model and inform the webview
-		const selectedModel = this._workspaceState.get('ollamaSelectedModel');
+		const selectedModel = this._workspaceState.get(OLLAMA_SELECTED_MODEL);
 		if (selectedModel) {
 			webviewView.webview.postMessage({ command: 'setMultimodal', multimodal: selectedModel.multimodal });
 			webviewView.webview.postMessage({ command: 'setModelName', modelName: selectedModel.name });
@@ -159,9 +285,21 @@ function activate(context) {
 					case 'sendMessage': {
 						const ollamaUrl = vscode.workspace.getConfiguration().get('vswizard.ollamaUrl') || 'http://localhost:11434';
 						const userMessage = { text: message.text, sender: 'user' };
-						chatHistory.push(userMessage);
-						this._workspaceState.update(historyKey, chatHistory);
-
+						//Get chatHistory from workspace state
+						var cur_chatHistory = this._workspaceState.get(OLLAMA_CHAT_HISTORY, []);
+						cur_chatHistory.push(userMessage);
+						this._workspaceState.update(OLLAMA_CHAT_HISTORY, cur_chatHistory);
+						// Save to session
+						const sessions = getSessions(this._workspaceState);
+						const idx = sessions.findIndex(s => s.id === currentSessionId);
+						if (idx !== -1) {
+							sessions[idx].history = cur_chatHistory;
+							// Set session name to user's question if still default
+							if (sessions[idx].name === 'New Session' && cur_chatHistory.length === 1) {
+								sessions[idx].name = message.text.length > 30 ? message.text.slice(0, 30) : message.text;
+							}
+							saveSessions(this._workspaceState, sessions);
+						}
 						// Abort any previous stream before starting a new one
 						if (this._abortController) {
 							this._abortController.abort();
@@ -169,30 +307,52 @@ function activate(context) {
 						this._abortController = new AbortController();
 
 						try {
-							// Pass abortController to sendMessageToOllama
 							const response = await sendMessageToOllama(
 								ollamaUrl,
 								message.text,
 								this._workspaceState,
 								webviewView,
-								chatHistory,
-								historyKey,
+								cur_chatHistory,
+								OLLAMA_CHAT_HISTORY,
+								OLLAMA_PARTIAL_RESPONSE,
 								null,
 								this._abortController.signal
 							);
-							// The history update and final message sending are now handled within sendMessageToOllama
+							// After bot response, update session
+							const sessions = getSessions(this._workspaceState);
+							const idx = sessions.findIndex(s => s.id === currentSessionId);
+							if (idx !== -1) {
+								sessions[idx].history = cur_chatHistory;
+								// If history has >2 messages, try to rename it
+								if (cur_chatHistory.length > 2 && cur_chatHistory.length % 2 === 0) {
+									try {
+										const selectedModel = this._workspaceState.get(OLLAMA_SELECTED_MODEL);
+										const model = selectedModel ? selectedModel.name : 'llama2';
+										const name = await generateSessionName(ollamaUrl, cur_chatHistory, model);
+										sessions[idx].name = name;
+										saveSessions(this._workspaceState, sessions);
+									} catch (e) { /* ignore name gen errors */ }
+								}
+								saveSessions(this._workspaceState, sessions);
+							}
 						} catch (error) {
 							if (error.name === 'AbortError') {
 								// Stream was aborted by user
+								const partResponse = this._workspaceState.get(OLLAMA_PARTIAL_RESPONSE);
+								if (partResponse) {
+									const partMessage = { text: partResponse, sender: 'bot' };
+									cur_chatHistory.push(partMessage);
+									this._workspaceState.update(OLLAMA_CHAT_HISTORY, cur_chatHistory);
+								}
 								webviewView.webview.postMessage({ command: 'streamDone', sender: 'bot' });
 							} else {
 								console.error('Error details:', error); // Log the full error object
-								const selectedModel = this._workspaceState.get('ollamaSelectedModel');
+								const selectedModel = this._workspaceState.get(OLLAMA_SELECTED_MODEL);
 								console.error('Selected model:', selectedModel); // Log the selected model
 								vscode.window.showErrorMessage(`Error communicating with Ollama: ${error.message}. Check VS Code output for details.`);
 								const errorMessage = { text: `Error: ${error.message}`, sender: 'bot' };
-								chatHistory.push(errorMessage);
-								this._workspaceState.update(historyKey, chatHistory);
+								cur_chatHistory.push(errorMessage);
+								this._workspaceState.update(OLLAMA_CHAT_HISTORY, cur_chatHistory);
 								webviewView.webview.postMessage({ command: 'addMessage', text: `Error: ${error.message}`, sender: 'bot' });
 							}
 						} finally {
@@ -226,14 +386,18 @@ async function sendMessageToOllama(
 	webviewView,
 	chatHistory,
 	historyKey,
+	partRespnonseKey,
 	image = null,
 	abortSignal = undefined
 ) {
-	const selectedModel = workspaceState.get('ollamaSelectedModel');
+	const selectedModel = workspaceState.get(OLLAMA_SELECTED_MODEL);
 	const model = selectedModel ? selectedModel.name : "llama2";
+	const contextLength = selectedModel && selectedModel.context_length ? selectedModel.context_length : 2048;
+	// Build prompt from history, respecting context window size
+	const fullPrompt = buildPromptFromHistory(chatHistory.slice(0, -1), prompt, contextLength);
 	const requestBody = {
 		model: model,
-		prompt: prompt,
+		prompt: fullPrompt,
 		stream: true
 	};
 
@@ -277,6 +441,7 @@ async function sendMessageToOllama(
 				const data = JSON.parse(jsonLine);
 				if (data.response) {
 					fullResponse += data.response;
+					workspaceState.update(partRespnonseKey, fullResponse);// Pass part response when user breaks the response.
 					webviewView.webview.postMessage({ command: 'addChunk', text: data.response, sender: 'bot' });
 				}
 				if (data.done) {
@@ -284,6 +449,7 @@ async function sendMessageToOllama(
 					const botMessage = { text: fullResponse, sender: 'bot' };
 					chatHistory.push(botMessage);
 					workspaceState.update(historyKey, chatHistory);
+					workspaceState.update(partRespnonseKey, ""); // Clear partial response
 					return fullResponse;
 				}
 			} catch (error) {
@@ -322,23 +488,57 @@ async function listOllamaModels(ollamaUrl) {
 
 			if (!detailsResponse.ok) {
 				console.error(`Error fetching details for model ${model.name}: ${detailsResponse.status}`);
-				return { ...model, multimodal: false }; // Assume not multimodal on error
+				return { ...model, multimodal: false, context_length: 2048 }; // Default context length on error
 			}
 
 			const details = await detailsResponse.json();
 			// Check if the model is multimodal (supports images). This might vary based on Ollama version or model.
-			// A common indicator is the presence of a 'vision_adapter' or similar in the details.
-			// For simplicity, we'll assume a model is multimodal if its details contain a 'parameter' related to vision.
 			const isMultimodal = JSON.stringify(details).includes('vision'); // Basic check
 
-			return { ...model, multimodal: isMultimodal };
+			// Extract context window size if available
+			let contextLength = 2048; // Default fallback
+			if (details && typeof details === 'object') {
+				if ('context_length' in details && typeof details['context_length'] === 'number') {
+					contextLength = details['context_length'];
+				} else if ('contextLength' in details && typeof details['contextLength'] === 'number') {
+					contextLength = details['contextLength'];
+				} else if ('context_window' in details && typeof details['context_window'] === 'number') {
+					contextLength = details['context_window'];
+				}
+			}
+
+			return { ...model, multimodal: isMultimodal, context_length: contextLength };
 		} catch (error) {
 			console.error(`Error fetching details for model ${model.name}: ${error.message}`);
-			return { ...model, multimodal: false }; // Assume not multimodal on error
+			return { ...model, multimodal: false, context_length: 2048 }; // Default context length on error
 		}
 	}));
 
 	return modelsWithDetails;
+}
+
+// Helper to build prompt from chat history, respecting context window size
+function buildPromptFromHistory(chatHistory, userMessage, contextLength) {
+	// Format: alternating 'User:' and 'Bot:'
+	const formatted = [];
+	for (const msg of chatHistory) {
+		if (msg.sender === 'user') {
+			formatted.push(`User: ${msg.text}`);
+		} else if (msg.sender === 'bot') {
+			formatted.push(`Bot: ${msg.text}`);
+		}
+	}
+	// Add the new user message
+	formatted.push(`User: ${userMessage}`);
+
+	// Start from the end, add messages until contextLength is reached
+	let prompt = '';
+	for (let i = formatted.length - 1; i >= 0; i--) {
+		const next = formatted[i] + '\n';
+		if ((prompt.length + next.length) > contextLength) break;
+		prompt = next + prompt;
+	}
+	return prompt.trim();
 }
 
 

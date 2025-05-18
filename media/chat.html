@@ -117,30 +117,38 @@ window.addEventListener('message', event => {
         let streamingBotMessage = null;
         let streamingBotText = '';
 
-        window.addEventListener('message', event => {
-            const message = event.data;
-            switch (message.command) {
-                case 'addMessage':
-                    addMessage(message.text, message.sender);
-                    break;
-                case 'addChunk':
-                    addChunk(message.text, message.sender);
-                    break;
-                case 'streamDone':
-                    finalizeStream();
-                    break;
-                case 'loadHistory':
-                    message.history.forEach(msg => addMessage(msg.text, msg.sender));
-                    break;
-                case 'setMultimodal':
-                    imagebutton.disabled = !message.multimodal;
-                    imagebutton.textContent = message.multimodal ? 'Upload Image' : 'Image Upload Not Supported';
-                    break;
-                case 'setModelName':
-                    messageinput.placeholder = `Ask ${message.modelName}...`;
-                    break;
-            }
-        });
+window.addEventListener('message', event => {
+    const message = event.data;
+    switch (message.command) {
+        case 'addMessage':
+            addMessage(message.text, message.sender);
+            break;
+        case 'addChunk':
+            addChunk(message.text, message.sender);
+            break;
+        case 'streamDone':
+            finalizeStream();
+            break;
+        case 'resetInput':
+            messageinput.value = '';
+            setSendButtonToSend();
+            break;
+case 'loadHistory':
+    // Clear existing messages but keep the logo (first child)
+    while (chatbox.children.length > 1) {
+        chatbox.removeChild(chatbox.lastChild);
+    }
+    message.history.forEach(msg => addMessage(msg.text, msg.sender));
+    break;
+        case 'setMultimodal':
+            imagebutton.disabled = !message.multimodal;
+            imagebutton.textContent = message.multimodal ? 'Upload Image' : 'Image Upload Not Supported';
+            break;
+        case 'setModelName':
+            messageinput.placeholder = `Ask ${message.modelName}...`;
+            break;
+    }
+});
 
         function addMessage(text, sender) {
             const messageElement = document.createElement('div');

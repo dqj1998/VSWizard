@@ -34,6 +34,14 @@
       {
         "command": "vswizard.clearLLMSelection",
         "title": "wzd: Clear Ollama Model Selection(For debugging)"
+      },
+      {
+        "command": "vswizard.newSession",
+        "title": "wzd: New Session"
+      },
+      {
+        "command": "vswizard.listHistory",
+        "title": "wzd: List Chat History"
       }
     ],
     "viewsContainers": {
