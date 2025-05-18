@@ -30,6 +30,10 @@ This will open a new VSCode window with your extension loaded. You can set break
 
 Any `console.log` statements in your extension will appear in the "Debug Console" panel of the original VSCode window.
 
+## Building vsxi file for local install
+* Open your terminal and navigate to the `vswizard` directory.
+* Run the command: `vsce package` 
+
 ## Publishing to the VSCode Marketplace
 
 To publish the extension to the official VSCode Marketplace, you need to follow these steps:
