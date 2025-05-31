@@ -2,7 +2,7 @@
   "name": "vswizard",
   "displayName": "VSWizard",
   "description": "AI wizard for VSCode",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "repository": {
     "type": "git",
     "url": "https://github.com/dqj/VSWizard.git"
@@ -42,6 +42,10 @@
       {
         "command": "vswizard.listHistory",
         "title": "wzd: List Chat History"
+      },
+      {
+        "command": "vswizard.setOllamaURL",
+        "title": "wzd: Set Ollama URL"
       }
     ],
     "viewsContainers": {
@@ -62,15 +66,15 @@
           "icon": "media/vswizard.png"
         }
       ]
-    }
-  },
-  "configuration": {
-    "title": "VSWizard Configuration",
-    "properties": {
-      "vswizard.ollamaUrl": {
-        "type": "string",
-        "default": "http://localhost:11434",
-        "description": "The URL of the local Ollama instance."
+    },
+    "configuration": {
+      "title": "VSWizard Configuration",
+      "properties": {
+        "vswizard.ollamaUrl": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "description": "The URL of the local Ollama instance."
+        }
       }
     }
   },

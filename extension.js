@@ -93,6 +93,23 @@ function activate(context) {
 	});
 	context.subscriptions.push(startChatDisposable);
 
+	const setOllamaUrlCommand = vscode.commands.registerCommand('vswizard.setOllamaURL', async function () {
+		const config = vscode.workspace.getConfiguration();
+		const currentUrl = config.get('vswizard.ollamaUrl') || 'http://localhost:11434';
+		const newUrl = await vscode.window.showInputBox({
+			prompt: 'Set Ollama URL',
+			value: currentUrl,
+			ignoreFocusOut: true
+		});
+		if (newUrl && newUrl !== currentUrl) {
+			await config.update('vswizard.ollamaUrl', newUrl, vscode.ConfigurationTarget.Global);
+			vscode.window.showInformationMessage(`Ollama URL set to: ${newUrl}`);
+		} else {
+			vscode.window.showInformationMessage(`Ollama URL remains: ${currentUrl}`);
+		}
+	});
+	context.subscriptions.push(setOllamaUrlCommand);
+
 	// Register the chat view provider
 	chatViewProviderInstance = new ChatViewProvider(context.extensionUri, context.workspaceState);
 	context.subscriptions.push(
