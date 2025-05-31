@@ -34,7 +34,6 @@ This extension contributes the following settings:
 ## Known Issues
 
 *   Basic error handling for Ollama communication. More robust error reporting can be added in the future.
-*   Streaming responses from Ollama are not yet supported, responses appear all at once.
 *   Image preview in the chat is not implemented.
 
 ## Release Notes

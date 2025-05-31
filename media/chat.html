@@ -6,7 +6,7 @@
     <title>Ollama Chat</title>
     <style>
         body { font-family: sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; }
-        #chatbox { flex-grow: 1; overflow-y: auto; padding: 10px; border-bottom: 1px solid #ccc; }
+        #chatbox { flex-grow: 1; overflow-y: auto; padding: 10px; border-bottom: 1px solid #ccc; margin-top: 10px; } /* Adjusted margin-top */
         .message { margin-bottom: 10px; }
         .user-message {
             text-align: right;
@@ -23,30 +23,114 @@
             color: #fff; /* Set text color to a dark gray */
         }
         .bot-message { text-align: left; }
-        #inputarea { display: flex; padding: 10px; }
-        #messageinput { flex-grow: 1; padding: 5px; margin-right: 10px; }
+        #inputarea { display: flex; flex-direction: column; padding: 10px; }
+        #input-row-top { display: flex; width: 100%; margin-bottom: 10px; }
+        #messageinput { flex-grow: 1; padding: 5px; } /* Removed margin-right */
         #sendbutton { padding: 5px 15px; }
+        #filecontextbutton { padding: 5px 10px; position: relative; } /* Removed margin-left */
+        #input-row-bottom { display: flex; width: 100%; justify-content: flex-start; } /* Align button to start */
+        #filecontext-popup {
+            display: none;
+            position: absolute;
+            bottom: 40px;
+            left: 0;
+            background: #fff;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            z-index: 100;
+            min-width: 120px;
+        }
+        #filecontext-popup ul {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+        #filecontext-popup li {
+            padding: 8px 16px;
+            cursor: pointer;
+            color: #222;
+        }
+        #filecontext-popup li.selected, #filecontext-popup li:hover {
+            background: #f0f0f0;
+        }
+        #filecontext-popup li .star {
+            color: #e67e22;
+            margin-left: 6px;
+        }
+
+        /* VSWizard Logo Styling */
+        #header {
+            position: relative;
+            width: 100%;
+            text-align: center;
+            padding: 10px 0; /* Add some padding above and below the logo */
+            background-color:transparent; /* Optional: Add a background to the header */
+            z-index: 10; /* Ensure it's above other content if needed */
+        }
+
+        img[alt="VSWizard Logo"] {
+            max-width: 100px;
+            height: auto;
+            display: block;
+            margin: 0 auto; /* Center the image within the header */
+        }
+
+        /* Flashing animation for the star */
+        @keyframes flash {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.2; }
+        }
+
+        .thinking-flash {
+            animation: flash 1s infinite alternate;
+        }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
+    <div id="header">
+        <img src="./vswizard.png" alt="VSWizard Logo">
+    </div>
     <div id="chatbox">
-        <img src="./vswizard.png" alt="VSWizard Logo" style="display: block; margin: 10px auto; max-width: 100px;">
         <!-- Messages will be added here -->
     </div>
-    <div id="inputarea">
-        <input type="text" id="messageinput" placeholder="Type your message...">
-        <input type="file" id="imageinput" accept="image/*" style="display: none;">
-        <button id="imagebutton">Upload Image</button>
-        <button id="sendbutton">Send</button>
+    <div id="inputarea" style="position:relative;">
+        <div id="input-row-top">
+            <input type="text" id="messageinput" placeholder="Type your message...">
+            <input type="file" id="imageinput" accept="image/*" style="display: none;">
+            <button id="imagebutton">Upload Image</button>
+            <button id="sendbutton">Send</button>
+        </div>
+        <div id="input-row-bottom">
+            <button id="filecontextbutton" type="button">@F</button>
+            <div id="filecontext-popup">
+                <ul>
+                    <li id="fc-current">Current file</li>
+                    <li id="fc-opening">Opening files</li>
+                    <li id="fc-non">Non files</li>
+                </ul>
+            </div>
+        </div>
     </div>
     <script>
         const vscode = acquireVsCodeApi();
-        const chatbox = document.getElementById('chatbox');
-        const messageinput = document.getElementById('messageinput');
-        const sendbutton = document.getElementById('sendbutton');
-        const imageinput = document.getElementById('imageinput');
-        const imagebutton = document.getElementById('imagebutton');
+const chatbox = document.getElementById('chatbox');
+const messageinput = document.getElementById('messageinput');
+const sendbutton = document.getElementById('sendbutton');
+const imageinput = document.getElementById('imageinput');
+const imagebutton = document.getElementById('imagebutton');
+const wizardLogo = document.querySelector('img[alt="VSWizard Logo"]'); // Get the wizard logo
+
+// Add Shift+Enter to send message
+messageinput.addEventListener('keydown', function(event) {
+    if (event.key === 'Enter' && event.shiftKey) {
+        event.preventDefault();
+        if (typeof originalSendHandler === 'function') {
+            originalSendHandler();
+        }
+    }
+});
 
         let isStreaming = false;
         let originalSendHandler = null;
@@ -75,12 +159,14 @@
                 vscode.postMessage({ command: 'stop' });
                 sendbutton.disabled = true; // Prevent multiple stop requests
             };
+            wizardLogo.classList.add('thinking-flash'); // Add flashing class
         }
 
         function setSendButtonToSend() {
             sendbutton.textContent = 'Send';
             sendbutton.disabled = false;
             sendbutton.onclick = originalSendHandler;
+            wizardLogo.classList.remove('thinking-flash'); // Remove flashing class
         }
 
         let currentModelName = null;
@@ -180,6 +266,119 @@ case 'loadHistory':
 
         // Request history when the webview is ready
         vscode.postMessage({ command: 'getHistory' });
+        // --- File Context Button & Popup Logic ---
+        const fileContextButton = document.getElementById('filecontextbutton');
+        const fileContextPopup = document.getElementById('filecontext-popup');
+        const fcCurrent = document.getElementById('fc-current');
+        const fcOpening = document.getElementById('fc-opening');
+        const fcNon = document.getElementById('fc-non');
+
+        // Selection state: "none" | "current" | "opening"
+        let fileContextSelection = "none";
+
+        function updateFileContextUI() {
+            // Update button title
+            if (fileContextSelection === "none") {
+                fileContextButton.textContent = "@F";
+            } else {
+                fileContextButton.textContent = "@F*";
+            }
+            // Update popup stars
+            fcCurrent.innerHTML = 'Current file' + (fileContextSelection === "current" ? ' <span class="star">*</span>' : '');
+            fcOpening.innerHTML = 'Opening files' + (fileContextSelection === "opening" ? ' <span class="star">*</span>' : '');
+            fcNon.innerHTML = 'Non files' + (fileContextSelection === "none" ? ' <span class="star">*</span>' : '');
+        }
+
+        fileContextButton.addEventListener('click', (e) => {
+            e.stopPropagation();
+            // Position popup just above the button
+            const rect = fileContextButton.getBoundingClientRect();
+            fileContextPopup.style.left = rect.left + "px";
+            fileContextPopup.style.bottom = (window.innerHeight - rect.top + 8) + "px";
+            fileContextPopup.style.display = fileContextPopup.style.display === "block" ? "none" : "block";
+            updateFileContextUI();
+        });
+
+        // Hide popup on click outside
+        document.addEventListener('click', (e) => {
+            if (!fileContextPopup.contains(e.target) && e.target !== fileContextButton) {
+                fileContextPopup.style.display = "none";
+            }
+        });
+
+        fcCurrent.addEventListener('click', () => {
+            fileContextSelection = "current";
+            updateFileContextUI();
+            fileContextPopup.style.display = "none";
+        });
+        fcOpening.addEventListener('click', () => {
+            fileContextSelection = "opening";
+            updateFileContextUI();
+            fileContextPopup.style.display = "none";
+        });
+        fcNon.addEventListener('click', () => {
+            fileContextSelection = "none";
+            updateFileContextUI();
+            fileContextPopup.style.display = "none";
+        });
+
+        updateFileContextUI();
+
+        // --- Patch send logic to include file content if needed ---
+        // Save original handler
+        const origSendHandlerWithFileContext = originalSendHandler;
+        originalSendHandler = function() {
+            if (!currentModelName || currentModelName === '<Select LLM please>') {
+                vscode.postMessage({ command: 'listOllamaModels' });
+                return;
+            }
+            const message = messageinput.value;
+            if (!message.trim()) return;
+
+            // If file context selection is on, request file content(s) from extension host
+            if (fileContextSelection === "current" || fileContextSelection === "opening") {
+                vscode.postMessage({
+                    command: 'getFileContext',
+                    type: fileContextSelection,
+                    userMessage: message
+                });
+                // The extension host should reply with { command: 'sendMessageWithFileContext', text }
+                messageinput.value = '';
+                setSendButtonToStop();
+                isStreaming = true;
+                return;
+            }
+
+            // Default: no file context
+            addMessage(message, 'user');
+            vscode.postMessage({ command: 'sendMessage', text: message });
+            messageinput.value = '';
+            setSendButtonToStop();
+            isStreaming = true;
+        };
+        sendbutton.onclick = originalSendHandler;
+
+        // Listen for file context content from extension host
+        window.addEventListener('message', event => {
+            const message = event.data;
+            switch (message.command) {
+                case 'sendMessageWithFileContext': // This case is now deprecated, but keeping for safety
+                    addMessage(message.text, 'user');
+                    vscode.postMessage({ command: 'sendMessage', text: message.text });
+                    setSendButtonToStop();
+                    isStreaming = true;
+                    break;
+                case 'displayUserMessageWithFileContext':
+                    // Display the simplified message to the user
+                    addMessage(message.displayText, 'user');
+                    // Then send the full message to the AI via the extension host
+                    vscode.postMessage({ command: 'sendMessage', text: message.fullText });
+                    setSendButtonToStop();
+                    isStreaming = true;
+                    break;
+            }
+        });
+
     </script>
 </body>
 </html>

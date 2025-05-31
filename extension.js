@@ -377,6 +377,56 @@ function activate(context) {
 						}
 						break;
 					}
+					case 'getFileContext': {
+						// message.type: "current" | "opening"
+						// message.userMessage: string
+						let fileContextText = '';
+						let displayFileContextText = ''; // New variable for display text
+						try {
+							if (message.type === "current") {
+								const editor = vscode.window.activeTextEditor;
+								if (editor) {
+									const fileName = editor.document.fileName.split(/[\\/]/).pop();
+									const content = editor.document.getText();
+									fileContextText = `\n\n[Current file: ${fileName}]\n\`\`\`\n${content}\n\`\`\``;
+									displayFileContextText = `\n\n[Current file: ${fileName}]`; // Only file name for display
+								} else {
+									fileContextText = "\n\n[No file is currently open in the main editor]";
+									displayFileContextText = "\n\n[No file is currently open in the main editor]";
+								}
+							} else if (message.type === "opening") {
+								const editors = vscode.window.visibleTextEditors;
+								if (editors.length > 0) {
+									fileContextText = editors.map(editor => {
+										const fileName = editor.document.fileName.split(/[\\/]/).pop();
+										const content = editor.document.getText();
+										return `[File: ${fileName}]\n\`\`\`\n${content}\n\`\`\``;
+									}).join('\n\n');
+									displayFileContextText = editors.map(editor => { // Only file names for display
+										const fileName = editor.document.fileName.split(/[\\/]/).pop();
+										return `[File: ${fileName}]`;
+									}).join('\n');
+									fileContextText = "\n\n" + fileContextText;
+									displayFileContextText = "\n\n" + displayFileContextText;
+								} else {
+									fileContextText = "\n\n[No files are currently open in VSCode]";
+									displayFileContextText = "\n\n[No files are currently open in VSCode]";
+								}
+							}
+						} catch (err) {
+							fileContextText = `\n\n[Error retrieving file context: ${err.message}]`;
+							displayFileContextText = `\n\n[Error retrieving file context: ${err.message}]`;
+						}
+						const fullComposedMessage = message.userMessage + fileContextText;
+						const displayComposedMessage = message.userMessage + displayFileContextText;
+
+						webviewView.webview.postMessage({
+							command: 'displayUserMessageWithFileContext',
+							fullText: fullComposedMessage,
+							displayText: displayComposedMessage
+						});
+						break;
+					}
 					case 'stop': {
 						if (this._abortController) {
 							this._abortController.abort();
