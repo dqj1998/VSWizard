@@ -121,11 +121,13 @@ function activate(context) {
 		try {
 			const models = await listOllamaModels(ollamaUrl);
 			if (models && models.length > 0) {
-				const modelNames = models.map(model => model.name);
-				vscode.window.showQuickPick(modelNames, {
+				const modelDisplayNames = models.map(model => `${model.name} (context window: ${model.context_length})`);
+				vscode.window.showQuickPick(modelDisplayNames, {
 					placeHolder: 'Select an Ollama model'
-				}).then(selectedModelName => {
-					if (selectedModelName) {
+				}).then(selectedDisplayName => {
+					if (selectedDisplayName) {
+						// Extract model name from display string
+						const selectedModelName = selectedDisplayName.split(' ')[0];
 						const selectedModel = models.find(model => model.name === selectedModelName);
 						if (selectedModel) {
 							context.workspaceState.update(OLLAMA_SELECTED_MODEL, selectedModel);
@@ -203,7 +205,7 @@ function activate(context) {
 				vscode.window.showInformationMessage('No chat sessions found.');
 				return;
 			}
-			const picks = sessions.map(s => ({ label: s.name, id: s.id }));
+			const picks = sessions.slice().reverse().map(s => ({ label: s.name, id: s.id }));
 			const selected = await vscode.window.showQuickPick(picks.map(p => p.label), { placeHolder: 'Select a chat session to load' });
 			if (selected) {
 				const session = sessions.find(s => s.name === selected);
@@ -306,6 +308,7 @@ function activate(context) {
 						var cur_chatHistory = this._workspaceState.get(OLLAMA_CHAT_HISTORY, []);
 						cur_chatHistory.push(userMessage);
 						this._workspaceState.update(OLLAMA_CHAT_HISTORY, cur_chatHistory);
+						this._chatHistory = cur_chatHistory; // Update local chat history
 						// Save to session
 						const sessions = getSessions(this._workspaceState);
 						const idx = sessions.findIndex(s => s.id === currentSessionId);
@@ -360,17 +363,84 @@ function activate(context) {
 									const partMessage = { text: partResponse, sender: 'bot' };
 									cur_chatHistory.push(partMessage);
 									this._workspaceState.update(OLLAMA_CHAT_HISTORY, cur_chatHistory);
+									// Save updated chat history into current session
+									const sessions = getSessions(this._workspaceState);
+									const idx = sessions.findIndex(s => s.id === currentSessionId);
+									if (idx !== -1) {
+										sessions[idx].history = cur_chatHistory;
+										// Generate session name for partial response
+										try {
+											const selectedModel = this._workspaceState.get(OLLAMA_SELECTED_MODEL);
+											const model = selectedModel ? selectedModel.name : 'llama2';
+											const name = await generateSessionName(vscode.workspace.getConfiguration().get('vswizard.ollamaUrl') || 'http://localhost:11434', cur_chatHistory, model);
+											sessions[idx].name = name;
+										} catch (e) {
+											// ignore name generation errors
+										}
+										saveSessions(this._workspaceState, sessions);
+									}
 								}
 								webviewView.webview.postMessage({ command: 'streamDone', sender: 'bot' });
 							} else {
-								console.error('Error details:', error); // Log the full error object
-								const selectedModel = this._workspaceState.get(OLLAMA_SELECTED_MODEL);
-								console.error('Selected model:', selectedModel); // Log the selected model
-								vscode.window.showErrorMessage(`Error communicating with Ollama: ${error.message}. Check VS Code output for details.`);
-								const errorMessage = { text: `Error: ${error.message}`, sender: 'bot' };
-								cur_chatHistory.push(errorMessage);
-								this._workspaceState.update(OLLAMA_CHAT_HISTORY, cur_chatHistory);
-								webviewView.webview.postMessage({ command: 'addMessage', text: `Error: ${error.message}`, sender: 'bot' });
+								// Retry logic for "Error communicating with Ollama"
+								if (!this._retryAttempted) {
+									this._retryAttempted = true;
+									console.warn('Retrying after error communicating with Ollama:', error.message);
+									try {
+										const retryResponse = await sendMessageToOllama(
+											ollamaUrl,
+											message.text,
+											this._workspaceState,
+											webviewView,
+											cur_chatHistory,
+											OLLAMA_CHAT_HISTORY,
+											OLLAMA_PARTIAL_RESPONSE,
+											null,
+											this._abortController.signal
+										);
+										// After successful retry, update session
+										const sessions = getSessions(this._workspaceState);
+										const idx = sessions.findIndex(s => s.id === currentSessionId);
+										if (idx !== -1) {
+											sessions[idx].history = cur_chatHistory;
+											// If history has >2 messages, try to rename it
+											if (cur_chatHistory.length > 2 && cur_chatHistory.length % 2 === 0) {
+												try {
+													const selectedModel = this._workspaceState.get(OLLAMA_SELECTED_MODEL);
+													const model = selectedModel ? selectedModel.name : 'llama2';
+													const name = await generateSessionName(ollamaUrl, cur_chatHistory, model);
+													sessions[idx].name = name;
+													saveSessions(this._workspaceState, sessions);
+												} catch (e) { /* ignore name gen errors */ }
+											}
+											saveSessions(this._workspaceState, sessions);
+										}
+										this._retryAttempted = false; // Reset retry flag after success
+									} catch (retryError) {
+										console.error('Retry failed:', retryError);
+										vscode.window.showErrorMessage(`Error communicating with Ollama: ${retryError.message}. Check VS Code output for details.`);
+										const errorMessage = { text: `Error: ${retryError.message}`, sender: 'bot' };
+										cur_chatHistory.push(errorMessage);
+										this._workspaceState.update(OLLAMA_CHAT_HISTORY, cur_chatHistory);
+										webviewView.webview.postMessage({ command: 'addMessage', text: `Error: ${retryError.message}`, sender: 'bot' });
+										// Reset send button status on retry failure
+										webviewView.webview.postMessage({ command: 'resetSendButton' });
+										this._retryAttempted = false; // Reset retry flag
+									}
+								} else {
+									// Already retried once, show error and reset retry flag
+									console.error('Error details:', error); // Log the full error object
+									const selectedModel = this._workspaceState.get(OLLAMA_SELECTED_MODEL);
+									console.error('Selected model:', selectedModel); // Log the selected model
+									vscode.window.showErrorMessage(`Error communicating with Ollama: ${error.message}. Check VS Code output for details.`);
+									const errorMessage = { text: `Error: ${error.message}`, sender: 'bot' };
+									cur_chatHistory.push(errorMessage);
+									this._workspaceState.update(OLLAMA_CHAT_HISTORY, cur_chatHistory);
+									webviewView.webview.postMessage({ command: 'addMessage', text: `Error: ${error.message}`, sender: 'bot' });
+									// Reset send button status on repeated error
+									webviewView.webview.postMessage({ command: 'resetSendButton' });
+									this._retryAttempted = false; // Reset retry flag
+								}
 							}
 						} finally {
 							this._abortController = null;
@@ -388,29 +458,52 @@ function activate(context) {
 								if (editor) {
 									const fileName = editor.document.fileName.split(/[\\/]/).pop();
 									const content = editor.document.getText();
-									fileContextText = `\n\n[Current file: ${fileName}]\n\`\`\`\n${content}\n\`\`\``;
+									fileContextText = `\n\n[Current file: ${fileName}]\n[File Content Start]\n\`\`\`\n${content}\n\`\`\`\n[File Content End]`;
 									displayFileContextText = `\n\n[Current file: ${fileName}]`; // Only file name for display
 								} else {
 									fileContextText = "\n\n[No file is currently open in the main editor]";
 									displayFileContextText = "\n\n[No file is currently open in the main editor]";
 								}
 							} else if (message.type === "opening") {
-								const editors = vscode.window.visibleTextEditors;
-								if (editors.length > 0) {
-									fileContextText = editors.map(editor => {
-										const fileName = editor.document.fileName.split(/[\\/]/).pop();
-										const content = editor.document.getText();
-										return `[File: ${fileName}]\n\`\`\`\n${content}\n\`\`\``;
-									}).join('\n\n');
-									displayFileContextText = editors.map(editor => { // Only file names for display
-										const fileName = editor.document.fileName.split(/[\\/]/).pop();
-										return `[File: ${fileName}]`;
-									}).join('\n');
-									fileContextText = "\n\n" + fileContextText;
-									displayFileContextText = "\n\n" + displayFileContextText;
+								const tabGroups = vscode.window.tabGroups.all;
+								if (tabGroups.length > 0) {
+									// Loop through all tabs in all tab groups
+									const allTabs = tabGroups.flatMap(group => group.tabs);
+									if (allTabs.length > 0) {
+										fileContextText = '';
+										displayFileContextText = '\n\n[Open files:';
+										for (const tab of allTabs) {
+											try {
+												let fileName = '';
+												let content = '';
+												if (tab.input && typeof tab.input === 'object' && 'uri' in tab.input) {
+													const input = tab.input;
+													// Cast input.uri to vscode.Uri to avoid type errors
+													const uri = /** @type {vscode.Uri} */ (input.uri);
+													fileName = uri.fsPath.split(/[\\/]/).pop();
+													const document = await vscode.workspace.openTextDocument(uri);
+													content = document.getText();
+												} else if (tab.label) {
+													fileName = tab.label;
+													content = '[Content not available]';
+												} else {
+													fileName = '[Unknown]';
+													content = '[Content not available]';
+												}
+												fileContextText += `\n\n[File: ${fileName}]\n[File Content Start]\n\`\`\`\n${content}\n\`\`\`\n[File Content End]`;
+												displayFileContextText += ` ${fileName};`;
+											} catch (err) {
+												fileContextText += `\n\n[Error retrieving content for a tab: ${err.message}]`;
+											}
+										}
+										displayFileContextText += ']';
+									} else {
+										fileContextText = "\n\n[No tabs are currently open in VSCode]";
+										displayFileContextText = "\n\n[No tabs are currently open in VSCode]";
+									}
 								} else {
-									fileContextText = "\n\n[No files are currently open in VSCode]";
-									displayFileContextText = "\n\n[No files are currently open in VSCode]";
+									fileContextText = "\n\n[No tab groups found in VSCode]";
+									displayFileContextText = "\n\n[No tab groups found in VSCode]";
 								}
 							}
 						} catch (err) {
@@ -461,7 +554,7 @@ async function sendMessageToOllama(
 	const model = selectedModel ? selectedModel.name : "llama2";
 	const contextLength = selectedModel && selectedModel.context_length ? selectedModel.context_length : 2048;
 	// Build prompt from history, respecting context window size
-	const fullPrompt = buildPromptFromHistory(chatHistory.slice(0, -1), prompt, contextLength);
+	const fullPrompt = buildPromptFromHistory(chatHistory, prompt, contextLength);
 	const requestBody = {
 		model: model,
 		prompt: fullPrompt,
@@ -494,7 +587,7 @@ async function sendMessageToOllama(
 		const { value, done } = await reader.read();
 		if (done) break;
 
-		buffer += decoder.decode(value, { stream: true });
+		buffer += decoder.decode(value, { stream: false });
 
 		// Process complete JSON objects in the buffer
 		while (true) {
@@ -547,6 +640,7 @@ async function listOllamaModels(ollamaUrl) {
 
 	const modelsWithDetails = await Promise.all(data.models.map(async (model) => {
 		try {
+			// Call /api/show endpoint to get detailed model info including context length
 			const detailsResponse = await fetch(`${ollamaUrl}/api/show`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
@@ -564,8 +658,14 @@ async function listOllamaModels(ollamaUrl) {
 
 			// Extract context window size if available
 			let contextLength = 2048; // Default fallback
-			if (details && typeof details === 'object') {
-				if ('context_length' in details && typeof details['context_length'] === 'number') {
+			if (details && typeof details === 'object' && details['details']) {
+				let para_name = details['details']['family']+".context_length";
+				// Use optional chaining and type checks to avoid TS errors
+				if (typeof details['model_info'] === 'object' && details['model_info'] !== null &&
+					details['model_info'][para_name] !== null &&
+					typeof details['model_info'][para_name] === 'number') {
+					contextLength = details['model_info'][para_name];
+				} else if ('context_length' in details && typeof details['context_length'] === 'number') {
 					contextLength = details['context_length'];
 				} else if ('contextLength' in details && typeof details['contextLength'] === 'number') {
 					contextLength = details['contextLength'];
@@ -596,7 +696,7 @@ function buildPromptFromHistory(chatHistory, userMessage, contextLength) {
 		}
 	}
 	// Add the new user message
-	formatted.push(`User: ${userMessage}`);
+	formatted.push(`User: ${userMessage} (Do not prefix your response with "Bot:")`);
 
 	// Start from the end, add messages until contextLength is reached
 	let prompt = '';

@@ -42,6 +42,10 @@ This extension contributes the following settings:
 
 Initial basic implementation with core chat, model listing, history, and basic image support.
 
+### 0.0.2
+
+Files attchement support, better UI
+
 ---
 
 **Enjoy chatting with your local Ollama models in VSCode!**

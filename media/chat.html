@@ -1,34 +1,94 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ollama Chat</title>
     <style>
-        body { font-family: sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; }
-        #chatbox { flex-grow: 1; overflow-y: auto; padding: 10px; border-bottom: 1px solid #ccc; margin-top: 10px; } /* Adjusted margin-top */
-        .message { margin-bottom: 10px; }
+        body {
+            font-family: sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        #chatbox {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 10px;
+            border-bottom: 1px solid #ccc;
+            margin-top: 10px;
+        }
+
+        /* Adjusted margin-top */
+        .message {
+            margin-bottom: 10px;
+        }
+
         .user-message {
             text-align: right;
-            margin-left: auto; /* Push the bubble to the right */
-            max-width: 80%; /* Limit bubble width */
-            background-color: #333; /* Light green background for user messages */
+            margin-left: auto;
+            /* Push the bubble to the right */
+            max-width: 80%;
+            /* Limit bubble width */
+            background-color: #333;
+            /* Light green background for user messages */
             padding: 3px 6px;
             border-radius: 6px;
             margin-bottom: 6px;
-            word-wrap: break-word; /* Prevent long words from overflowing */
+            word-wrap: break-word;
+            /* Prevent long words from overflowing */
         }
-        .user-message div { /* Style the content inside the bubble */
+
+        .user-message div {
+            /* Style the content inside the bubble */
             text-align: left;
-            color: #fff; /* Set text color to a dark gray */
+            color: #fff;
+            /* Set text color to a dark gray */
         }
-        .bot-message { text-align: left; }
-        #inputarea { display: flex; flex-direction: column; padding: 10px; }
-        #input-row-top { display: flex; width: 100%; margin-bottom: 10px; }
-        #messageinput { flex-grow: 1; padding: 5px; } /* Removed margin-right */
-        #sendbutton { padding: 5px 15px; }
-        #filecontextbutton { padding: 5px 10px; position: relative; } /* Removed margin-left */
-        #input-row-bottom { display: flex; width: 100%; justify-content: flex-start; } /* Align button to start */
+
+        .bot-message {
+            text-align: left;
+        }
+
+        #inputarea {
+            display: flex;
+            flex-direction: column;
+            padding: 10px;
+        }
+
+        #input-row-top {
+            display: flex;
+            width: 100%;
+            margin-bottom: 10px;
+        }
+
+        #messageinput {
+            flex-grow: 1;
+            padding: 5px;
+        }
+
+        /* Removed margin-right */
+        #sendbutton {
+            padding: 5px 15px;
+        }
+
+        #filecontextbutton {
+            padding: 5px 10px;
+            position: relative;
+        }
+
+        /* Removed margin-left */
+        #input-row-bottom {
+            display: flex;
+            width: 100%;
+            justify-content: flex-start;
+        }
+
+        /* Align button to start */
         #filecontext-popup {
             display: none;
             position: absolute;
@@ -37,23 +97,28 @@
             background: #fff;
             border: 1px solid #ccc;
             border-radius: 6px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
             z-index: 100;
             min-width: 120px;
         }
+
         #filecontext-popup ul {
             list-style: none;
             margin: 0;
             padding: 0;
         }
+
         #filecontext-popup li {
             padding: 8px 16px;
             cursor: pointer;
             color: #222;
         }
-        #filecontext-popup li.selected, #filecontext-popup li:hover {
+
+        #filecontext-popup li.selected,
+        #filecontext-popup li:hover {
             background: #f0f0f0;
         }
+
         #filecontext-popup li .star {
             color: #e67e22;
             margin-left: 6px;
@@ -64,22 +129,33 @@
             position: relative;
             width: 100%;
             text-align: center;
-            padding: 10px 0; /* Add some padding above and below the logo */
-            background-color:transparent; /* Optional: Add a background to the header */
-            z-index: 10; /* Ensure it's above other content if needed */
+            padding: 10px 0;
+            /* Add some padding above and below the logo */
+            background-color: transparent;
+            /* Optional: Add a background to the header */
+            z-index: 10;
+            /* Ensure it's above other content if needed */
         }
 
         img[alt="VSWizard Logo"] {
             max-width: 100px;
             height: auto;
             display: block;
-            margin: 0 auto; /* Center the image within the header */
+            margin: 0 auto;
+            /* Center the image within the header */
         }
 
         /* Flashing animation for the star */
         @keyframes flash {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.2; }
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.2;
+            }
         }
 
         .thinking-flash {
@@ -88,6 +164,7 @@
     </style>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
+
 <body>
     <div id="header">
         <img src="./vswizard.png" alt="VSWizard Logo">
@@ -99,11 +176,11 @@
         <div id="input-row-top">
             <input type="text" id="messageinput" placeholder="Type your message...">
             <input type="file" id="imageinput" accept="image/*" style="display: none;">
-            <button id="imagebutton">Upload Image</button>
             <button id="sendbutton">Send</button>
         </div>
         <div id="input-row-bottom">
-            <button id="filecontextbutton" type="button">@F</button>
+            <button id="filecontextbutton" type="button" aria-label="File Context Button"></button>
+            <button id="imagebutton" aria-label="Image Upload Button"></button>
             <div id="filecontext-popup">
                 <ul>
                     <li id="fc-current">Current file</li>
@@ -115,22 +192,23 @@
     </div>
     <script>
         const vscode = acquireVsCodeApi();
-const chatbox = document.getElementById('chatbox');
-const messageinput = document.getElementById('messageinput');
-const sendbutton = document.getElementById('sendbutton');
-const imageinput = document.getElementById('imageinput');
-const imagebutton = document.getElementById('imagebutton');
-const wizardLogo = document.querySelector('img[alt="VSWizard Logo"]'); // Get the wizard logo
+        const IMG_TEXT = '+Img';
+        const chatbox = document.getElementById('chatbox');
+        const messageinput = document.getElementById('messageinput');
+        const sendbutton = document.getElementById('sendbutton');
+        const imageinput = document.getElementById('imageinput');
+        const imagebutton = document.getElementById('imagebutton');
+        const wizardLogo = document.querySelector('img[alt="VSWizard Logo"]'); // Get the wizard logo
 
-// Add Shift+Enter to send message
-messageinput.addEventListener('keydown', function(event) {
-    if (event.key === 'Enter' && event.shiftKey) {
-        event.preventDefault();
-        if (typeof originalSendHandler === 'function') {
-            originalSendHandler();
-        }
-    }
-});
+        // Add Shift+Enter to send message
+        messageinput.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter' && event.shiftKey) {
+                event.preventDefault();
+                if (typeof originalSendHandler === 'function') {
+                    originalSendHandler();
+                }
+            }
+        });
 
         let isStreaming = false;
         let originalSendHandler = null;
@@ -153,7 +231,7 @@ messageinput.addEventListener('keydown', function(event) {
         });
 
         function setSendButtonToStop() {
-            sendbutton.textContent = 'Stop';
+            sendbutton.textContent = STOP_TEXT;
             sendbutton.disabled = false;
             sendbutton.onclick = () => {
                 vscode.postMessage({ command: 'stop' });
@@ -163,7 +241,7 @@ messageinput.addEventListener('keydown', function(event) {
         }
 
         function setSendButtonToSend() {
-            sendbutton.textContent = 'Send';
+            sendbutton.textContent = SEND_TEXT;
             sendbutton.disabled = false;
             sendbutton.onclick = originalSendHandler;
             wizardLogo.classList.remove('thinking-flash'); // Remove flashing class
@@ -171,70 +249,80 @@ messageinput.addEventListener('keydown', function(event) {
 
         let currentModelName = null;
 
-// Save the original send handler
-originalSendHandler = function() {
-    if (!currentModelName || currentModelName === '<Select LLM please>') {
-        vscode.postMessage({ command: 'listOllamaModels' });
-        return;
-    }
-    const message = messageinput.value;
-    if (message.trim()) {
-        addMessage(message, 'user');
-        vscode.postMessage({ command: 'sendMessage', text: message });
-        messageinput.value = '';
-        setSendButtonToStop();
-        isStreaming = true;
-    }
-};
-sendbutton.onclick = originalSendHandler;
+        // Save the original send handler
+        originalSendHandler = function () {
+            if (!currentModelName || currentModelName === '<Select LLM please>') {
+                vscode.postMessage({ command: 'listOllamaModels' });
+                return;
+            }
+            const message = messageinput.value;
+            if (message.trim()) {
+                addMessage(message, 'user');
+                vscode.postMessage({ command: 'sendMessage', text: message });
+                messageinput.value = '';
+                setSendButtonToStop();
+                isStreaming = true;
+            }
+        };
+        sendbutton.onclick = originalSendHandler;
 
-window.addEventListener('message', event => {
-    const message = event.data;
-    switch (message.command) {
-        case 'setModelName':
-            currentModelName = message.modelName;
-            messageinput.placeholder = `Ask ${message.modelName}...`;
-            break;
-        // other cases handled below
-    }
-});
+        window.addEventListener('message', event => {
+            const message = event.data;
+            switch (message.command) {
+                case 'setModelName':
+                    currentModelName = message.modelName;
+                    messageinput.placeholder = `Ask ${message.modelName}...`;
+                    break;
+                case 'resetInput':
+                    messageinput.placeholder = PROMPT_TEXT_DEFAULT;
+                    break;
+                // other cases handled below
+            }
+        });
+
+        window.addEventListener('message', event => {
+            const message = event.data;
+            switch (message.command) {
+                case 'addMessage':
+                    addMessage(message.text, message.sender);
+                    break;
+                case 'addChunk':
+                    addChunk(message.text, message.sender);
+                    break;
+                case 'streamDone':
+                    finalizeStream();
+                    break;
+                case 'resetInput':
+                    messageinput.value = '';
+                    setSendButtonToSend();
+                    break;
+                case 'clearHistory':
+                    // Clear all existing messages
+                    while (chatbox.firstChild) {
+                        chatbox.removeChild(chatbox.firstChild);
+                    }
+                    break;
+                case 'loadHistory':
+                    // Clear all existing messages
+                    while (chatbox.firstChild) {
+                        chatbox.removeChild(chatbox.firstChild);
+                    }
+                    // When loading history, strip file content blocks including start/end lines to show only file names
+                    message.history.forEach(msg => {
+                        let displayText = msg.text.replace(/\[File Content Start\]\n```[\s\S]*?```\n\[File Content End\]/g, '');
+                        addMessage(displayText, msg.sender);
+                    });
+                    break;
+                case 'setMultimodal':
+                    imagebutton.disabled = !message.multimodal;
+                    imagebutton.textContent = message.multimodal ? IMG_TEXT : 'Image Upload Not Supported';
+                    break;
+            }
+        });
 
         // Streaming support
         let streamingBotMessage = null;
         let streamingBotText = '';
-
-window.addEventListener('message', event => {
-    const message = event.data;
-    switch (message.command) {
-        case 'addMessage':
-            addMessage(message.text, message.sender);
-            break;
-        case 'addChunk':
-            addChunk(message.text, message.sender);
-            break;
-        case 'streamDone':
-            finalizeStream();
-            break;
-        case 'resetInput':
-            messageinput.value = '';
-            setSendButtonToSend();
-            break;
-case 'loadHistory':
-    // Clear existing messages but keep the logo (first child)
-    while (chatbox.children.length > 1) {
-        chatbox.removeChild(chatbox.lastChild);
-    }
-    message.history.forEach(msg => addMessage(msg.text, msg.sender));
-    break;
-        case 'setMultimodal':
-            imagebutton.disabled = !message.multimodal;
-            imagebutton.textContent = message.multimodal ? 'Upload Image' : 'Image Upload Not Supported';
-            break;
-        case 'setModelName':
-            messageinput.placeholder = `Ask ${message.modelName}...`;
-            break;
-    }
-});
 
         function addMessage(text, sender) {
             const messageElement = document.createElement('div');
@@ -252,7 +340,21 @@ case 'loadHistory':
                 chatbox.appendChild(streamingBotMessage);
                 streamingBotText = '';
             }
-            streamingBotText += text;
+
+            // Helper function to find longest overlap between end of streamingBotText and start of text
+            function findOverlap(a, b) {
+                const maxOverlap = Math.min(a.length, b.length);
+                for (let i = maxOverlap; i > 0; i--) {
+                    if (a.endsWith(b.substring(0, i))) {
+                        return i;
+                    }
+                }
+                return 0;
+            }
+
+            const overlapLength = findOverlap(streamingBotText, text);
+            streamingBotText += text.substring(overlapLength);
+
             streamingBotMessage.innerHTML = marked.parse(streamingBotText);
             chatbox.scrollTop = chatbox.scrollHeight;
         }
@@ -279,9 +381,9 @@ case 'loadHistory':
         function updateFileContextUI() {
             // Update button title
             if (fileContextSelection === "none") {
-                fileContextButton.textContent = "@F";
+                fileContextButton.textContent = "+F";
             } else {
-                fileContextButton.textContent = "@F*";
+                fileContextButton.textContent = "+F*";
             }
             // Update popup stars
             fcCurrent.innerHTML = 'Current file' + (fileContextSelection === "current" ? ' <span class="star">*</span>' : '');
@@ -327,7 +429,7 @@ case 'loadHistory':
         // --- Patch send logic to include file content if needed ---
         // Save original handler
         const origSendHandlerWithFileContext = originalSendHandler;
-        originalSendHandler = function() {
+        originalSendHandler = function () {
             if (!currentModelName || currentModelName === '<Select LLM please>') {
                 vscode.postMessage({ command: 'listOllamaModels' });
                 return;
@@ -363,14 +465,14 @@ case 'loadHistory':
             const message = event.data;
             switch (message.command) {
                 case 'sendMessageWithFileContext': // This case is now deprecated, but keeping for safety
-                    addMessage(message.text, 'user');
+                    // Removed addMessage call to prevent duplicate user message display
                     vscode.postMessage({ command: 'sendMessage', text: message.text });
                     setSendButtonToStop();
                     isStreaming = true;
                     break;
                 case 'displayUserMessageWithFileContext':
                     // Display the simplified message to the user
-                    addMessage(message.displayText, 'user');
+                    addMessage(message.displayText, 'user'); // Removed to prevent duplicate user message display
                     // Then send the full message to the AI via the extension host
                     vscode.postMessage({ command: 'sendMessage', text: message.fullText });
                     setSendButtonToStop();
@@ -381,4 +483,5 @@ case 'loadHistory':
 
     </script>
 </body>
+
 </html>
