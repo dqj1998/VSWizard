@@ -253,6 +253,8 @@ function activate(context) {
 			// Optionally notify webview
 			if (chatViewProviderInstance && chatViewProviderInstance._webviewView) {
 				chatViewProviderInstance._webviewView.webview.postMessage({ command: 'setProvider', provider: provider.value });
+				// Refresh the input prompt in the webview after provider change
+				chatViewProviderInstance._webviewView.webview.postMessage({ command: 'resetInput' });
 			}
 		}
 	});
@@ -314,6 +316,7 @@ class ChatViewProvider {
 	constructor(extensionUri, workspaceState) {
 		this._extensionUri = extensionUri;
 		this._workspaceState = workspaceState;
+		this._pendingImages = [];
 	}
 
 	/**
@@ -406,103 +409,55 @@ class ChatViewProvider {
 								this._abortController.abort();
 							}
 							this._abortController = new AbortController();
-							await handleOpenAIChat(this);
+							const image = this._pendingImages || null;
+							this._pendingImages = null;
+							await handleOpenAIChat(this, image);
 							// After OpenAI streaming completes or errors, update placeholder
 							if (this._webviewView) {
 								this._webviewView.webview.postMessage({ command: 'setModelName', modelName: `OpenAI (${openaiModel})` });
 							}
 							break;
 						}
-						// Existing Ollama logic...
-						const ollamaUrl = vscode.workspace.getConfiguration().get('vswizard.ollamaUrl') || 'http://localhost:11434';
+						// Ollama logic with image support
 						const userMessage = { text: message.text, sender: 'user' };
-						//Get chatHistory from workspace state
 						var cur_chatHistory = this._workspaceState.get(OLLAMA_CHAT_HISTORY, []);
 						cur_chatHistory.push(userMessage);
 						this._workspaceState.update(OLLAMA_CHAT_HISTORY, cur_chatHistory);
-						this._chatHistory = cur_chatHistory; // Update local chat history
+						this._chatHistory = cur_chatHistory;
 						// Save to session
 						const sessions = getSessions(this._workspaceState);
 						const idx = sessions.findIndex(s => s.id === currentSessionId);
 						if (idx !== -1) {
 							sessions[idx].history = cur_chatHistory;
-							// Set session name to user's question if still default
 							if (sessions[idx].name === 'New Session' && cur_chatHistory.length === 1) {
 								sessions[idx].name = message.text.length > 30 ? message.text.slice(0, 30) : message.text;
 							}
 							saveSessions(this._workspaceState, sessions);
 						}
-						// Abort any previous stream before starting a new one
 						if (this._abortController) {
 							this._abortController.abort();
 						}
 						this._abortController = new AbortController();
-
-						try {
-							await sendMessageToOllama(
-								ollamaUrl,
-								message.text,
-								this._workspaceState,
-								webviewView,
-								cur_chatHistory,
-								OLLAMA_CHAT_HISTORY,
-								OLLAMA_PARTIAL_RESPONSE,
-								null,
-								this._abortController.signal
-							);
-							// After bot response, update session
-							const sessions = getSessions(this._workspaceState);
-							const idx = sessions.findIndex(s => s.id === currentSessionId);
-							if (idx !== -1) {
-								sessions[idx].history = cur_chatHistory;
-								saveSessions(this._workspaceState, sessions);
-							}
-							// Always update placeholder after response
-							const provider = this._workspaceState.get(VSWIZARD_PROVIDER) || 'ollama';
-							if (this._webviewView) {
-								if (provider === 'openai') {
-									const openaiModel = this._workspaceState.get(OPENAI_SELECTED_MODEL) || DEFAULT_OPENAI_MODEL;
-									this._webviewView.webview.postMessage({ command: 'setModelName', modelName: `OpenAI (${openaiModel})` });
-								} else {
-									const selectedModel = this._workspaceState.get(OLLAMA_SELECTED_MODEL);
-									this._webviewView.webview.postMessage({ command: 'setModelName', modelName: selectedModel ? selectedModel.name : '<Select LLM please>' });
-								}
-							}
-						} catch (error) {
-							if (error.name === 'AbortError') {
-								// Stream was aborted by user
-								const partResponse = this._workspaceState.get(OLLAMA_PARTIAL_RESPONSE);
-								if (partResponse) {
-									const partMessage = { text: partResponse, sender: 'bot' };
-									cur_chatHistory.push(partMessage);
-									this._workspaceState.update(OLLAMA_CHAT_HISTORY, cur_chatHistory);
-									// Save updated chat history into current session
-									const sessions = getSessions(this._workspaceState);
-									const idx = sessions.findIndex(s => s.id === currentSessionId);
-									if (idx !== -1) {
-										sessions[idx].history = cur_chatHistory;
-										// Generate session name for partial response
-										try {
-											const selectedModel = this._workspaceState.get(OLLAMA_SELECTED_MODEL);
-											const model = selectedModel ? selectedModel.name : 'llama2';
-											const name = await generateSessionName(vscode.workspace.getConfiguration().get('vswizard.ollamaUrl') || 'http://localhost:11434', cur_chatHistory, model);
-											sessions[idx].name = name;
-										} catch (e) {
-											// ignore name generation errors
-										}
-										saveSessions(this._workspaceState, sessions);
-									}
-								}
-								webviewView.webview.postMessage({ command: 'streamDone', sender: 'bot' });
-							}
-						} finally {
-							this._abortController = null;
-						}
+						const image = this._pendingImages || null;
+						this._pendingImages = null;
+						await sendMessageToOllama(this, image);
 						// After Ollama streaming completes or errors, update placeholder
 						if (this._webviewView) {
 							const selectedModel = this._workspaceState.get(OLLAMA_SELECTED_MODEL);
 							const modelName = selectedModel ? selectedModel.name : '<Select LLM please>';
 							this._webviewView.webview.postMessage({ command: 'setModelName', modelName });
+						}
+						break;
+					}
+					case 'setImage': {
+						// Store the image in the provider instance for the next message (now as a list)
+						if (!this._pendingImages) this._pendingImages = [];
+						this._pendingImages.push(message.image);
+						if (this._webviewView) {
+							this._webviewView.webview.postMessage({
+								command: 'showImagePreview',
+								image: message.image
+							});
 						}
 						break;
 					}
@@ -569,7 +524,7 @@ class ChatViewProvider {
 							fileContextText = `\n\n[Error retrieving file context: ${err.message}]`;
 							displayFileContextText = `\n\n[Error retrieving file context: ${err.message}]`;
 						}
-						const fullComposedMessage = message.userMessage + fileContextText;
+						const fullComposedMessage = message.userMessage + "(Readig files below and answer user)" +fileContextText;
 						const displayComposedMessage = message.userMessage + displayFileContextText;
 						const tokenCount = countTokens(fullComposedMessage);
 
@@ -589,21 +544,13 @@ class ChatViewProvider {
 							this._abortController.abort();
 						}
 						this._abortController = new AbortController();
+						const images = this._pendingImages || null;
+						this._pendingImages = null;
 						if (providerForContext === 'openai') {
-							await handleOpenAIChat(this);
+							await handleOpenAIChat(this, images);
 						} else {
-							// Use Ollama provider to generate response							
-							sendMessageToOllama(
-								vscode.workspace.getConfiguration().get('vswizard.ollamaUrl') || 'http://localhost:11434',
-								fullComposedMessage,
-								this._workspaceState,
-								webviewView,
-								this._chatHistory,
-								OLLAMA_CHAT_HISTORY,
-								OLLAMA_PARTIAL_RESPONSE,
-								null,
-								this._abortController.signal
-							);
+							// Use Ollama provider to generate response		
+							await sendMessageToOllama(this, images);
 						}
 
 						break;
@@ -637,7 +584,8 @@ class ChatViewProvider {
 }
 
 // Helper function to handle OpenAI chat streaming for both sendMessage and getFileContext
-async function handleOpenAIChat(providerInstance) {
+// Now supports images (for GPT-4 Vision etc)
+async function handleOpenAIChat(providerInstance, images = null) {
 	const workspaceState = providerInstance._workspaceState;
 	const webviewView = providerInstance._webviewView;
 	const abortController = providerInstance._abortController;
@@ -650,8 +598,25 @@ async function handleOpenAIChat(providerInstance) {
 
 	// Prepare messages for OpenAI API
 	let messages = chatHistory.map(m => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text }));
-	//messages.push({ role: 'user', content: userMessage });
-	
+
+	// If images are present, attach them to the last user message (for GPT-4 Vision etc)
+	if (images && Array.isArray(images) && images.length > 0 && messages.length > 0) {
+		const lastMsg = messages[messages.length - 1];
+		if (lastMsg.role === 'user') {
+			// normalize raw base64 strings into data URLs
+			const imageSegments = images.map(img => {
+				let url = img;
+				if (!/^data:/.test(img)) {
+					url = `data:image/png;base64,${img}`;
+				}
+				return { type: 'image_url', image_url: { url } };
+			});
+			lastMsg.content = [
+				{ type: 'text', text: lastMsg.content },
+				...imageSegments
+			];
+		}
+	}
 	try {
 		const response = await fetch(endpoint, {
 			method: 'POST',
@@ -713,30 +678,28 @@ async function handleOpenAIChat(providerInstance) {
 	}
 }
 
-async function sendMessageToOllama(
-	ollamaUrl,
-	prompt,
-	workspaceState,
-	webviewView,
-	chatHistory,
-	historyKey,
-	partRespnonseKey,
-	image = null,
-	abortSignal = undefined
-) {
+async function sendMessageToOllama(providerInstance, images = null) {
+	const ollamaUrl = vscode.workspace.getConfiguration().get('vswizard.ollamaUrl') || 'http://localhost:11434';
+	const workspaceState = providerInstance._workspaceState;
+	const webviewView = providerInstance._webviewView;
+	const chatHistory = providerInstance._chatHistory || [];
+	const historyKey = OLLAMA_CHAT_HISTORY;
+	const partRespnonseKey = OLLAMA_PARTIAL_RESPONSE;
+	const abortSignal = providerInstance._abortController ? providerInstance._abortController.signal : null;
+
 	const selectedModel = workspaceState.get(OLLAMA_SELECTED_MODEL);
 	const model = selectedModel ? selectedModel.name : "llama2";
 	const contextLength = selectedModel && selectedModel.context_length ? selectedModel.context_length : 2048;
 	// Build prompt from history, respecting context window size
-	const fullPrompt = buildPromptFromHistory(chatHistory, prompt, contextLength);
+	const fullPrompt = buildPromptFromHistory(chatHistory, contextLength);
 	const requestBody = {
 		model: model,
 		prompt: fullPrompt,
 		stream: true
 	};
 
-	if (image) {
-		requestBody.images = [image];
+	if (images && Array.isArray(images) && images.length > 0) {
+		requestBody.images = images;
 	}
 
 	const response = await fetch(`${ollamaUrl || 'http://localhost:11434'}/api/generate`, {
@@ -859,7 +822,7 @@ async function listOllamaModels(ollamaUrl) {
 }
 
 // Helper to build prompt from chat history, respecting contextLength
-function buildPromptFromHistory(chatHistory, userMessage, contextLength) {
+function buildPromptFromHistory(chatHistory, contextLength) {
 	// Format: alternating 'User:' and 'Bot:'
 	const formatted = [];
 	for (const msg of chatHistory) {
@@ -870,7 +833,7 @@ function buildPromptFromHistory(chatHistory, userMessage, contextLength) {
 		}
 	}
 	// Add the new user message
-	formatted.push(`User: ${userMessage} (Do not prefix your response with "Bot:")`);
+	formatted.push(`User: (Do not prefix your response with "Bot:")`);
 
 	// Start from the end, add messages until contextLength is reached
 	let prompt = '';

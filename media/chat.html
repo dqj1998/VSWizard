@@ -180,7 +180,7 @@
         </div>
         <div id="input-row-bottom">
             <button id="filecontextbutton" type="button" aria-label="File Context Button"></button>
-            <button id="imagebutton" aria-label="Image Upload Button"></button>
+            <button id="imagebutton" aria-label="Image Upload Button" title="+Img">+Img</button>
             <div id="filecontext-popup">
                 <ul>
                     <li id="fc-current">Current file</li>
@@ -300,15 +300,6 @@
                         messageinput.placeholder = PROMPT_TEXT_DEFAULT;
                     }
                     break;
-                case 'resetInput':
-                    // On resetInput, show 'Ask ...' with model name if available
-                    if (currentModelName) {
-                        messageinput.placeholder = `Ask ${currentModelName}...`;
-                    } else {
-                        messageinput.placeholder = PROMPT_TEXT_DEFAULT;
-                    }
-                    break;
-                // other cases handled below
             }
         });
 
@@ -329,10 +320,18 @@
                     break;
                 case 'resetSendButton':
                     setSendButtonToSend(); // Reset on explicit command
+                    // Remove image preview if present
+                    const preview = document.getElementById('image-preview');
+                    if (preview && preview.parentNode) preview.parentNode.removeChild(preview);
                     break;
                 case 'resetInput':
                     messageinput.value = '';
                     setSendButtonToSend(); // Reset on input reset
+                    if (currentModelName) {
+                        messageinput.placeholder = `Ask ${currentModelName}...`;
+                    } else {
+                        messageinput.placeholder = PROMPT_TEXT_DEFAULT;
+                    }
                     break;
                 case 'clearHistory':
                     // Clear all existing messages
@@ -345,9 +344,11 @@
                     if (typeof fileContextButton !== 'undefined') fileContextButton.textContent = '+File';
                     if (typeof imageinput !== 'undefined') imageinput.value = '';
                     if (typeof imagebutton !== 'undefined') {
-                        imagebutton.textContent = lastMultimodal ? IMG_TEXT : 'Image Upload Not Supported';
+                        //imagebutton.textContent = lastMultimodal ? IMG_TEXT : 'Image Upload Not Supported';
                         imagebutton.disabled = !lastMultimodal;
                     }
+                    const preview2 = document.getElementById('image-preview');
+                    if (preview2 && preview2.parentNode) preview2.parentNode.removeChild(preview2);
                     break;
                 case 'loadHistory':
                     // Clear all existing messages
@@ -366,16 +367,27 @@
                         if (typeof fileContextButton !== 'undefined') fileContextButton.textContent = '+File';
                         if (typeof imageinput !== 'undefined') imageinput.value = '';
                         if (typeof imagebutton !== 'undefined') {
-                            imagebutton.textContent = lastMultimodal ? IMG_TEXT : 'Image Upload Not Supported';
+                            //imagebutton.textContent = lastMultimodal ? IMG_TEXT : 'Image Upload Not Supported';
                             imagebutton.disabled = !lastMultimodal;
                         }
                     }
+                    const preview3 = document.getElementById('image-preview');
+                    if (preview3 && preview3.parentNode) preview3.parentNode.removeChild(preview3);
                     break;
                 case 'setMultimodal':
                     lastMultimodal = !!message.multimodal;
                     imagebutton.disabled = !lastMultimodal;
-                    imagebutton.textContent = lastMultimodal ? IMG_TEXT : 'Image Upload Not Supported';
+                    //imagebutton.textContent = lastMultimodal ? IMG_TEXT : 'Image Upload Not Supported';
                     break;
+                case 'showImagePreview': {
+                    // Show a small preview of the selected image as a user message in the chat history
+                    let previewMsg = document.createElement('div');
+                    previewMsg.classList.add('message', 'user-message');
+                    previewMsg.innerHTML = `<img src="data:image/png;base64,${message.image}" alt="Selected image" style="max-width:120px;max-height:120px;border-radius:6px;margin:4px 0;vertical-align:middle;box-shadow:0 1px 4px #aaa;display:block;"> <div style='color:#888;font-size:0.95em;'>Image selected. Send your message.</div>`;
+                    chatbox.appendChild(previewMsg);
+                    chatbox.scrollTop = chatbox.scrollHeight;
+                    break;
+                }
             }
         });
 
