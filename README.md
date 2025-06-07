@@ -1,6 +1,8 @@
-# Ollama Chat VSCode Extension
+# AI Chat VSCode Extension
 
-This extension provides a chat interface within VSCode to interact with a local Ollama Language Model.
+This extension provides a chat interface within VSCode to interact with LLM:
+* a local Ollama Language Model
+* OpenAI API
 
 ## Features
 
@@ -35,12 +37,35 @@ This extension contributes the following settings:
 
 You can use either a local Ollama model or OpenAI's API as the backend for chat.
 
+To enable OpenAI support, configure parameters in VSCode:
+
+- **Configure via Command**  
+  Run **wzd: Set OpenAI API Parameters** to customize:  
+  - **API Key** (required)  
+  - **Endpoint URL** (default: `https://api.openai.com/v1`)  
+  - **Model** (e.g. `gpt-3.5-turbo`, `gpt-4`)  
+  - **Temperature** (0.0–1.0 for response randomness)
+
+  Obtain a key from https://platform.openai.com/account/api-keys and enter it when prompted.
+
 ### Commands
 
 - **wzd: Select LLM Provider (Ollama or OpenAI):** Choose between using Ollama or OpenAI for chat.
-- **wzd: Set OpenAI API Parameters:** Set your OpenAI API key, endpoint, model, and temperature.
+- **wzd: Set OpenAI API Parameters:** Configure OpenAI API key, endpoint, model, and temperature.
 
-When OpenAI is selected, the extension will use your provided API key and settings for chat.
+### Usage Example
+
+```bash
+code .
+```  
+After launching, select **OpenAI** as the provider and start chatting.
+
+### Tips & Troubleshooting
+
+- To switch providers at any time, run **wzd: Select LLM Provider**.
+- To update model or temperature, rerun **wzd: Set OpenAI API Parameters**.
+- Proxy or streaming settings can be adjusted in VSCode settings if needed.
+- Refer to OpenAI API docs for advanced options: https://platform.openai.com/docs/api-reference/.
 
 ## Known Issues
 
