@@ -175,7 +175,7 @@
     <div id="inputarea" style="position:relative;">
         <div id="input-row-top">
             <input type="text" id="messageinput" placeholder="Type your message...">
-            <input type="file" id="imageinput" accept="image/*" style="display: none;">
+            <input type="file" id="imageinput" accept="image/*" multiple style="display: none;">
             <button id="sendbutton">Send</button>
         </div>
         <div id="input-row-bottom">
@@ -220,15 +220,16 @@
         });
 
         imageinput.addEventListener('change', (event) => {
-            const file = event.target.files[0];
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    const base64Image = e.target.result.split(',')[1]; // Get base64 string
-                    vscode.postMessage({ command: 'setImage', image: base64Image });
-                    vscode.window.showInformationMessage('Image selected. Send your message.');
-                };
-                reader.readAsDataURL(file);
+            const files = event.target.files;
+            if (files.length) {
+                Array.from(files).forEach(file => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const base64Image = e.target.result.split(',')[1]; // Get base64 string
+                        vscode.postMessage({ command: 'setImage', image: base64Image });
+                    };
+                    reader.readAsDataURL(file);
+                });
             }
         });
 
