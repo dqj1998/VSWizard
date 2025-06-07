@@ -385,11 +385,7 @@ class ChatViewProvider {
 						const provider = this._workspaceState.get(VSWIZARD_PROVIDER) || 'ollama';
 						let openaiModel = this._workspaceState.get(OPENAI_SELECTED_MODEL) || DEFAULT_OPENAI_MODEL;
 						if (provider === 'openai') {
-							// OpenAI logic
-							const apiKey = this._workspaceState.get(OPENAI_API_KEY);
-							const endpoint = this._workspaceState.get(OPENAI_API_ENDPOINT) || 'https://api.openai.com/v1/chat/completions';
-							const model = this._workspaceState.get(OPENAI_SELECTED_MODEL) || DEFAULT_OPENAI_MODEL;
-							const temperature = this._workspaceState.get(OPENAI_TEMPERATURE) || 1.0;
+							// OpenAI logic (refactored)
 							const userMessage = { text: message.text, sender: 'user' };
 							var cur_chatHistory = this._workspaceState.get(OLLAMA_CHAT_HISTORY, []);
 							cur_chatHistory.push(userMessage);
@@ -405,76 +401,12 @@ class ChatViewProvider {
 								}
 								saveSessions(this._workspaceState, sessions);
 							}
-							// Call OpenAI API
-							try {
-								const messages = cur_chatHistory.map(m => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text }));
-								const requestBody = {
-									model,
-									messages,
-									temperature,
-									stream: true
-								};
-								const response = await fetch(endpoint, {
-									method: 'POST',
-									headers: {
-										'Content-Type': 'application/json',
-										'Authorization': `Bearer ${apiKey}`
-									},
-									body: JSON.stringify(requestBody)
-								});
-								if (!response.ok) throw new Error(`OpenAI API error: ${response.status} ${response.statusText}`);
-								// Streaming response handling
-								const reader = response.body.getReader();
-								const decoder = new TextDecoder();
-								let buffer = '';
-								let fullResponse = '';
-								while (true) {
-									const { value, done } = await reader.read();
-									if (done) break;
-									buffer += decoder.decode(value, { stream: false });
-									// OpenAI streams lines starting with 'data: '
-									while (true) {
-										const newlineIndex = buffer.indexOf('\n');
-										if (newlineIndex === -1) break;
-										let line = buffer.substring(0, newlineIndex).trim();
-										buffer = buffer.substring(newlineIndex + 1);
-										if (!line.startsWith('data:')) continue;
-										line = line.replace(/^data: /, '');
-										if (line === '[DONE]') {
-											if (this._webviewView) this._webviewView.webview.postMessage({ command: 'streamDone', sender: 'bot' });
-											break;
-										}
-										try {
-											const data = JSON.parse(line);
-											const delta = data.choices && data.choices[0] && data.choices[0].delta && data.choices[0].delta.content ? data.choices[0].delta.content : '';
-											if (delta) {
-												fullResponse += delta;
-												if (this._webviewView) this._webviewView.webview.postMessage({ command: 'addChunk', text: delta, sender: 'bot' });
-											}
-										} catch (err) {
-											// Ignore JSON parse errors for non-data lines
-										}
-									}
-								}
-								// Finalize
-								if (fullResponse) {
-									const botMessage = { text: fullResponse, sender: 'bot' };
-									cur_chatHistory.push(botMessage);
-									this._workspaceState.update(OLLAMA_CHAT_HISTORY, cur_chatHistory);
-									// Save updated session
-									const sessions = getSessions(this._workspaceState);
-									const idx = sessions.findIndex(s => s.id === currentSessionId);
-									if (idx !== -1) {
-										sessions[idx].history = cur_chatHistory;
-										saveSessions(this._workspaceState, sessions);
-									}
-								}
-							} catch (error) {
-								if (this._webviewView) {
-									this._webviewView.webview.postMessage({ command: 'addMessage', text: `Error: ${error.message}`, sender: 'bot' });
-									this._webviewView.webview.postMessage({ command: 'resetSendButton' });
-								}
+							// Abort any previous stream before starting a new one
+							if (this._abortController) {
+								this._abortController.abort();
 							}
+							this._abortController = new AbortController();
+							await handleOpenAIChat(this);
 							// After OpenAI streaming completes or errors, update placeholder
 							if (this._webviewView) {
 								this._webviewView.webview.postMessage({ command: 'setModelName', modelName: `OpenAI (${openaiModel})` });
@@ -507,7 +439,7 @@ class ChatViewProvider {
 						this._abortController = new AbortController();
 
 						try {
-							const response = await sendMessageToOllama(
+							await sendMessageToOllama(
 								ollamaUrl,
 								message.text,
 								this._workspaceState,
@@ -562,66 +494,6 @@ class ChatViewProvider {
 									}
 								}
 								webviewView.webview.postMessage({ command: 'streamDone', sender: 'bot' });
-							} else {
-								// Retry logic for "Error communicating with Ollama"
-								if (!this._retryAttempted) {
-									this._retryAttempted = true;
-									console.warn('Retrying after error communicating with Ollama:', error.message);
-									try {
-										const retryResponse = await sendMessageToOllama(
-											ollamaUrl,
-											message.text,
-											this._workspaceState,
-											webviewView,
-											cur_chatHistory,
-											OLLAMA_CHAT_HISTORY,
-											OLLAMA_PARTIAL_RESPONSE,
-											null,
-											this._abortController.signal
-										);
-										// After successful retry, update session
-										const sessions = getSessions(this._workspaceState);
-										const idx = sessions.findIndex(s => s.id === currentSessionId);
-										if (idx !== -1) {
-											sessions[idx].history = cur_chatHistory;
-											// If history has >2 messages, try to rename it
-											if (cur_chatHistory.length > 2 && cur_chatHistory.length % 2 === 0) {
-												try {
-													const selectedModel = this._workspaceState.get(OLLAMA_SELECTED_MODEL);
-													const model = selectedModel ? selectedModel.name : 'llama2';
-													const name = await generateSessionName(ollamaUrl, cur_chatHistory, model);
-													sessions[idx].name = name;
-													saveSessions(this._workspaceState, sessions);
-												} catch (e) { /* ignore name gen errors */ }
-											}
-											saveSessions(this._workspaceState, sessions);
-										}
-										this._retryAttempted = false; // Reset retry flag after success
-									} catch (retryError) {
-										console.error('Retry failed:', retryError);
-										vscode.window.showErrorMessage(`Error communicating with Ollama: ${retryError.message}. Check VS Code output for details.`);
-										const errorMessage = { text: `Error: ${retryError.message}`, sender: 'bot' };
-										cur_chatHistory.push(errorMessage);
-										this._workspaceState.update(OLLAMA_CHAT_HISTORY, cur_chatHistory);
-										webviewView.webview.postMessage({ command: 'addMessage', text: `Error: ${retryError.message}`, sender: 'bot' });
-										// Reset send button status on retry failure
-										webviewView.webview.postMessage({ command: 'resetSendButton' });
-										this._retryAttempted = false; // Reset retry flag
-									}
-								} else {
-									// Already retried once, show error and reset retry flag
-									console.error('Error details:', error); // Log the full error object
-									const selectedModel = this._workspaceState.get(OLLAMA_SELECTED_MODEL);
-									console.error('Selected model:', selectedModel); // Log the selected model
-									vscode.window.showErrorMessage(`Error communicating with Ollama: ${error.message}. Check VS Code output for details.`);
-									const errorMessage = { text: `Error: ${error.message}`, sender: 'bot' };
-									cur_chatHistory.push(errorMessage);
-									this._workspaceState.update(OLLAMA_CHAT_HISTORY, cur_chatHistory);
-									webviewView.webview.postMessage({ command: 'addMessage', text: `Error: ${error.message}`, sender: 'bot' });
-									// Reset send button status on repeated error
-									webviewView.webview.postMessage({ command: 'resetSendButton' });
-									this._retryAttempted = false; // Reset retry flag
-								}
 							}
 						} finally {
 							this._abortController = null;
@@ -710,79 +582,17 @@ class ChatViewProvider {
 						});
 						// Call AI after getting file context
 						const providerForContext = this._workspaceState.get(VSWIZARD_PROVIDER) || 'ollama';
-						const userMsgForContext = { text: message.userMessage, sender: 'user' };
+						const userMsgForContext = { text: fullComposedMessage, sender: 'user' };
 						this._chatHistory.push(userMsgForContext);
 						this._workspaceState.update(OLLAMA_CHAT_HISTORY, this._chatHistory);
+						if (this._abortController) {
+							this._abortController.abort();
+						}
+						this._abortController = new AbortController();
 						if (providerForContext === 'openai') {
-							// Call OpenAI API for file context
-							if (this._abortController) {
-								this._abortController.abort();
-							}
-							this._abortController = new AbortController();
-							(async () => {
-								try {
-									const apiKey = this._workspaceState.get(OPENAI_API_KEY);
-									const endpoint = this._workspaceState.get(OPENAI_API_ENDPOINT) || 'https://api.openai.com/v1/chat/completions';
-									const model = this._workspaceState.get(OPENAI_SELECTED_MODEL) || DEFAULT_OPENAI_MODEL;
-									const temperature = this._workspaceState.get(OPENAI_TEMPERATURE) || 1.0;
-									// Prepare messages from history
-									const messages = this._chatHistory.map(m => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text }));
-									messages.push({ role: 'user', content: fullComposedMessage });
-									const response = await fetch(endpoint, {
-										method: 'POST',
-										headers: {
-											'Content-Type': 'application/json',
-											'Authorization': `Bearer ${apiKey}`
-										},
-										body: JSON.stringify({ model, messages, temperature, stream: true }),
-										signal: this._abortController.signal
-									});
-									if (!response.ok) throw new Error(`OpenAI API error: ${response.status} ${response.statusText}`);
-									const reader = response.body.getReader();
-									const decoder = new TextDecoder();
-									let buffer = '';
-									let fullResponse = '';
-									while (true) {
-										const { value, done } = await reader.read();
-										if (done) break;
-										buffer += decoder.decode(value, { stream: false });
-										while (true) {
-											const newlineIndex = buffer.indexOf('\n');
-											if (newlineIndex === -1) break;
-											let line = buffer.substring(0, newlineIndex).trim();
-											buffer = buffer.substring(newlineIndex + 1);
-											if (!line.startsWith('data:')) continue;
-											line = line.replace(/^data: /, '');
-											if (line === '[DONE]') {
-												webviewView.webview.postMessage({ command: 'streamDone', sender: 'bot' });
-												break;
-											}
-											const data = JSON.parse(line);
-											const delta = data.choices?.[0]?.delta?.content;
-											if (delta) {
-												fullResponse += delta;
-												webviewView.webview.postMessage({ command: 'addChunk', text: delta, sender: 'bot' });
-											}
-										}
-									}
-									if (fullResponse) {
-										const botMessage = { text: fullResponse, sender: 'bot' };
-										this._chatHistory.push(botMessage);
-										this._workspaceState.update(OLLAMA_CHAT_HISTORY, this._chatHistory);
-									}
-								} catch (error) {
-									webviewView.webview.postMessage({ command: 'addMessage', text: `Error: ${error.message}`, sender: 'bot' });
-									webviewView.webview.postMessage({ command: 'resetSendButton' });
-								} finally {
-									this._abortController = null;
-								}
-							})();
+							await handleOpenAIChat(this);
 						} else {
-							// Use Ollama provider to generate response
-							if (this._abortController) {
-								this._abortController.abort();
-							}
-							this._abortController = new AbortController();
+							// Use Ollama provider to generate response							
 							sendMessageToOllama(
 								vscode.workspace.getConfiguration().get('vswizard.ollamaUrl') || 'http://localhost:11434',
 								fullComposedMessage,
@@ -810,12 +620,98 @@ class ChatViewProvider {
 						await vscode.commands.executeCommand('vswizard.listModels');
 						break;
 					}
+					case 'getCurrentOllamaModel': {
+						// Respond to webview's request for current Ollama model name
+						const selectedModel = this._workspaceState.get(OLLAMA_SELECTED_MODEL);
+						if (selectedModel && this._webviewView) {
+							this._webviewView.webview.postMessage({ command: 'setModelName', modelName: selectedModel.name });
+						} else if (this._webviewView) {
+							this._webviewView.webview.postMessage({ command: 'setModelName', modelName: '<Select LLM please>' });
+						}
+						break;
+					}
 				}
 			}
 		);
 	}
 }
 
+// Helper function to handle OpenAI chat streaming for both sendMessage and getFileContext
+async function handleOpenAIChat(providerInstance) {
+	const workspaceState = providerInstance._workspaceState;
+	const webviewView = providerInstance._webviewView;
+	const abortController = providerInstance._abortController;
+
+	const apiKey = workspaceState.get(OPENAI_API_KEY);
+	const endpoint = workspaceState.get(OPENAI_API_ENDPOINT) || 'https://api.openai.com/v1/chat/completions';
+	const model = workspaceState.get(OPENAI_SELECTED_MODEL) || DEFAULT_OPENAI_MODEL;
+	const temperature = workspaceState.get(OPENAI_TEMPERATURE) || 1.0;
+	const chatHistory = workspaceState.get(OLLAMA_CHAT_HISTORY, []);
+
+	// Prepare messages for OpenAI API
+	let messages = chatHistory.map(m => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text }));
+	//messages.push({ role: 'user', content: userMessage });
+	
+	try {
+		const response = await fetch(endpoint, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'Authorization': `Bearer ${apiKey}`
+			},
+			body: JSON.stringify({ model, messages, temperature, stream: true }),
+			signal: abortController.signal
+		});
+
+		if (!response.ok) throw new Error(`OpenAI API error: ${response.status} ${response.statusText}`);
+
+		const reader = response.body.getReader();
+		const decoder = new TextDecoder();
+		let buffer = '';
+		let fullResponse = '';
+
+		while (true) {
+			const { value, done } = await reader.read();
+			if (done) break;
+
+			buffer += decoder.decode(value, { stream: false });
+
+			while (true) {
+				const newlineIndex = buffer.indexOf('\n');
+				if (newlineIndex === -1) break;
+				let line = buffer.substring(0, newlineIndex).trim();
+				buffer = buffer.substring(newlineIndex + 1);
+				if (!line.startsWith('data:')) continue;
+				line = line.replace(/^data: /, '');
+				if (line === '[DONE]') {
+					if (webviewView) webviewView.webview.postMessage({ command: 'streamDone', sender: 'bot' });
+					break;
+				}
+				try {
+					const data = JSON.parse(line);
+					const delta = data.choices?.[0]?.delta?.content;
+					if (delta) {
+						fullResponse += delta;
+						if (webviewView) webviewView.webview.postMessage({ command: 'addChunk', text: delta, sender: 'bot' });
+					}
+				} catch {
+					// ignore parse errors
+				}
+			}
+		}
+		if (fullResponse) {
+			const botMessage = { text: fullResponse, sender: 'bot' };
+			chatHistory.push(botMessage);
+			workspaceState.update(OLLAMA_CHAT_HISTORY, chatHistory);
+		}
+
+	} catch (error) {
+		if (webviewView) {
+			webviewView.webview.postMessage({ command: 'addMessage', text: `Error: ${error.message}`, sender: 'bot' });
+			webviewView.webview.postMessage({ command: 'resetSendButton' });
+		}
+	}
+}
 
 async function sendMessageToOllama(
 	ollamaUrl,

@@ -252,7 +252,7 @@
         }
 
         let currentModelName = null;
-        let PROMPT_TEXT_DEFAULT = 'Ask your message...';
+        let PROMPT_TEXT_DEFAULT = 'Type your message...';
 
         // Save the original send handler
         originalSendHandler = function () {
@@ -265,6 +265,11 @@
                 setSendButtonToStop(); // Set to Stop immediately on send
                 vscode.postMessage({ command: 'sendMessage', text: message });
                 messageinput.value = '';
+                if (currentModelName) {
+                    messageinput.placeholder = `Ask ${currentModelName}...`;
+                } else {
+                    messageinput.placeholder = PROMPT_TEXT_DEFAULT;
+                }
             }
         };
         sendbutton.onclick = originalSendHandler;
@@ -272,27 +277,32 @@
         window.addEventListener('message', event => {
             const message = event.data;
             switch (message.command) {
-                case 'setModelName':
-                    currentModelName = message.modelName;
-                    if (currentModelName.startsWith('OpenAI (')) {
-                        messageinput.placeholder = `Ask ${currentModelName}...`;
-                    } else if (currentModelName && currentModelName !== '<Select LLM please>') {
-                        messageinput.placeholder = `Ask ${currentModelName}...`;
+                case 'setProvider':
+                    if (message.provider === 'openai') {
+                        // Always show OpenAI model name in placeholder
+                        const model = currentModelName ? currentModelName : '<Select LLM please>';
+                        messageinput.placeholder = `Ask ${model}...`;
+                    } else if (message.provider === 'ollama') {
+                        // Clear model name and prompt for selection
+                        currentModelName = '';
+                        messageinput.placeholder = PROMPT_TEXT_DEFAULT;
+                        // Optionally, request the extension to send the current Ollama model name
+                        vscode.postMessage({ command: 'getCurrentOllamaModel' });
                     } else {
                         messageinput.placeholder = PROMPT_TEXT_DEFAULT;
                     }
                     break;
-                case 'setProvider':
-                    if (message.provider === 'openai') {
-                        const model = currentModelName && currentModelName.startsWith('OpenAI (') ? currentModelName : 'OpenAI (gpt-3.5-turbo)';
-                        messageinput.placeholder = `Ask ${model}...`;
+                case 'setModelName':
+                    currentModelName = message.modelName;
+                    if (currentModelName) {
+                        messageinput.placeholder = `Ask ${currentModelName}...`;
                     } else {
                         messageinput.placeholder = PROMPT_TEXT_DEFAULT;
                     }
                     break;
                 case 'resetInput':
                     // On resetInput, show 'Ask ...' with model name if available
-                    if (currentModelName && currentModelName !== '<Select LLM please>') {
+                    if (currentModelName) {
                         messageinput.placeholder = `Ask ${currentModelName}...`;
                     } else {
                         messageinput.placeholder = PROMPT_TEXT_DEFAULT;
@@ -504,6 +514,11 @@
             addMessage(message, 'user');
             vscode.postMessage({ command: 'sendMessage', text: message });
             messageinput.value = '';
+            if (currentModelName) {
+                messageinput.placeholder = `Ask ${currentModelName}...`;
+            } else {
+                messageinput.placeholder = PROMPT_TEXT_DEFAULT;
+            }
             setSendButtonToStop();
             isStreaming = true;
         };
