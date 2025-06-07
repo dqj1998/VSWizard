@@ -46,6 +46,14 @@
       {
         "command": "vswizard.setOllamaURL",
         "title": "wzd: Set Ollama URL"
+      },
+      {
+        "command": "vswizard.selectProvider",
+        "title": "wzd: Select LLM Provider (Ollama or OpenAI)"
+      },
+      {
+        "command": "vswizard.setOpenAIParams",
+        "title": "wzd: Set OpenAI API Parameters"
       }
     ],
     "viewsContainers": {

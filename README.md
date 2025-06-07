@@ -31,6 +31,17 @@ This extension contributes the following settings:
 6.  Type your messages and press Enter or click Send to chat with the selected Ollama model.
 7.  If the selected model supports images, you can use the "Upload Image" button to include an image with your next message.
 
+## OpenAI Support
+
+You can use either a local Ollama model or OpenAI's API as the backend for chat.
+
+### Commands
+
+- **wzd: Select LLM Provider (Ollama or OpenAI):** Choose between using Ollama or OpenAI for chat.
+- **wzd: Set OpenAI API Parameters:** Set your OpenAI API key, endpoint, model, and temperature.
+
+When OpenAI is selected, the extension will use your provided API key and settings for chat.
+
 ## Known Issues
 
 *   Basic error handling for Ollama communication. More robust error reporting can be added in the future.

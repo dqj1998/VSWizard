@@ -10,6 +10,16 @@ const OLLAMA_SELECTED_MODEL = 'ollamaSelectedModel';
 const VSWIZARD_SESSIONS = 'vswizardSessions';
 const VSWIZARD_CURRENT_SESSION_ID = 'vswizardCurrentSessionId';
 
+// Add new constants for OpenAI
+const OPENAI_API_KEY = 'openaiApiKey';
+const OPENAI_API_ENDPOINT = 'openaiApiEndpoint';
+const OPENAI_SELECTED_MODEL = 'openaiSelectedModel';
+const OPENAI_TEMPERATURE = 'openaiTemperature';
+const VSWIZARD_PROVIDER = 'vswizardProvider'; // 'ollama' or 'openai'
+
+// Add a constant for the default OpenAI model
+const DEFAULT_OPENAI_MODEL = 'gpt-4.1-mini';
+
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
 
@@ -180,20 +190,20 @@ function activate(context) {
 		const model = selectedModel ? selectedModel.name : 'llama2';
 		const sessions = getSessions(context.workspaceState);
 		const newId = 'session-' + Date.now();
-	const newSession = { id: newId, name: 'New Session', history: [] };
-	sessions.push(newSession);
-	saveSessions(context.workspaceState, sessions);
-	setCurrentSession(context.workspaceState, newId);
-	context.workspaceState.update(OLLAMA_CHAT_HISTORY, []);
-	if (chatViewProviderInstance) {
-		chatViewProviderInstance._chatHistory = [];
-	}
-	if (chatViewProviderInstance && chatViewProviderInstance._webviewView) {
-		chatViewProviderInstance._webviewView.webview.postMessage({ command: 'clearHistory' });
-		chatViewProviderInstance._webviewView.webview.postMessage({ command: 'loadHistory', history: [] });
-		chatViewProviderInstance._webviewView.webview.postMessage({ command: 'resetInput' });
-	}
-	vscode.window.showInformationMessage('Started a new chat session.');
+		const newSession = { id: newId, name: 'New Session', history: [] };
+		sessions.push(newSession);
+		saveSessions(context.workspaceState, sessions);
+		setCurrentSession(context.workspaceState, newId);
+		context.workspaceState.update(OLLAMA_CHAT_HISTORY, []);
+		if (chatViewProviderInstance) {
+			chatViewProviderInstance._chatHistory = [];
+		}
+		if (chatViewProviderInstance && chatViewProviderInstance._webviewView) {
+			chatViewProviderInstance._webviewView.webview.postMessage({ command: 'clearHistory' });
+			chatViewProviderInstance._webviewView.webview.postMessage({ command: 'loadHistory', history: [] });
+			chatViewProviderInstance._webviewView.webview.postMessage({ command: 'resetInput' });
+		}
+		vscode.window.showInformationMessage('Started a new chat session.');
 	});
 	context.subscriptions.push(newSessionCommand);
 
@@ -230,10 +240,73 @@ function activate(context) {
 		}
 	});
 	context.subscriptions.push(listHistoryCommand);
+
+	// Command: Select Provider (Ollama or OpenAI)
+	const selectProviderCommand = vscode.commands.registerCommand('vswizard.selectProvider', async function () {
+		const provider = await vscode.window.showQuickPick([
+			{ label: 'Ollama', value: 'ollama' },
+			{ label: 'OpenAI', value: 'openai' }
+		], { placeHolder: 'Select LLM Provider' });
+		if (provider) {
+			context.workspaceState.update(VSWIZARD_PROVIDER, provider.value);
+			vscode.window.showInformationMessage(`VSWizard provider set to: ${provider.label}`);
+			// Optionally notify webview
+			if (chatViewProviderInstance && chatViewProviderInstance._webviewView) {
+				chatViewProviderInstance._webviewView.webview.postMessage({ command: 'setProvider', provider: provider.value });
+			}
+		}
+	});
+	context.subscriptions.push(selectProviderCommand);
+
+	// Command: Set OpenAI Parameters
+	const setOpenAIParamsCommand = vscode.commands.registerCommand('vswizard.setOpenAIParams', async function () {
+		const apiKey = await vscode.window.showInputBox({
+			prompt: 'Enter your OpenAI API Key',
+			value: context.workspaceState.get(OPENAI_API_KEY) || '',
+			ignoreFocusOut: true,
+			password: true
+		});
+		if (apiKey) {
+			context.workspaceState.update(OPENAI_API_KEY, apiKey);
+		}
+		const endpoint = await vscode.window.showInputBox({
+			prompt: 'Enter OpenAI API Endpoint (default: https://api.openai.com/v1/chat/completions)',
+			value: context.workspaceState.get(OPENAI_API_ENDPOINT) || 'https://api.openai.com/v1/chat/completions',
+			ignoreFocusOut: true
+		});
+		if (endpoint) {
+			context.workspaceState.update(OPENAI_API_ENDPOINT, endpoint);
+		}
+		const model = await vscode.window.showInputBox({
+			prompt: 'Enter OpenAI Model (e.g., gpt-3.5-turbo, gpt-4o, etc)',
+			value: context.workspaceState.get(OPENAI_SELECTED_MODEL) || DEFAULT_OPENAI_MODEL,
+			ignoreFocusOut: true
+		});
+		if (model) {
+			context.workspaceState.update(OPENAI_SELECTED_MODEL, model);
+		}
+		const temperature = await vscode.window.showInputBox({
+			prompt: 'Set temperature (0.0 - 2.0)',
+			value: String(context.workspaceState.get(OPENAI_TEMPERATURE) || '1.0'),
+			ignoreFocusOut: true
+		});
+		if (temperature && !isNaN(Number(temperature))) {
+			context.workspaceState.update(OPENAI_TEMPERATURE, Number(temperature));
+		}
+		vscode.window.showInformationMessage('OpenAI parameters updated.');
+	});
+	context.subscriptions.push(setOpenAIParamsCommand);
 }
 
-	// WebviewViewProvider for the chat view
-	class ChatViewProvider {
+// Simple token count: split by whitespace and punctuation
+// For more accuracy, use a tokenizer matching your LLM
+function countTokens(text) {
+	// Simple heuristic: whitespace/punctuation split, then multiply by 3 for a rougher LLM token estimate
+	return text.split(/\s+|[.,!?;:()\[\]{}"'`]/).filter(Boolean).length * 3;
+}
+
+// WebviewViewProvider for the chat view
+class ChatViewProvider {
 	/**
 	 * @param {vscode.Uri} extensionUri
 	 * @param {vscode.Memento} workspaceState
@@ -290,6 +363,13 @@ function activate(context) {
 			webviewView.webview.postMessage({ command: 'setModelName', modelName: '<Select LLM please>' }); // Default placeholder
 		}
 
+		// Get provider and OpenAI model for placeholder
+		const provider = this._workspaceState.get(VSWIZARD_PROVIDER) || 'ollama';
+		let openaiModel = this._workspaceState.get(OPENAI_SELECTED_MODEL) || DEFAULT_OPENAI_MODEL;
+		if (provider === 'openai') {
+			webviewView.webview.postMessage({ command: 'setModelName', modelName: `OpenAI (${openaiModel})` });
+		}
+
 		// Send history to webview
 		webviewView.webview.onDidReceiveMessage(message => {
 			if (message.command === 'getHistory') {
@@ -302,6 +382,106 @@ function activate(context) {
 			async message => {
 				switch (message.command) {
 					case 'sendMessage': {
+						const provider = this._workspaceState.get(VSWIZARD_PROVIDER) || 'ollama';
+						let openaiModel = this._workspaceState.get(OPENAI_SELECTED_MODEL) || DEFAULT_OPENAI_MODEL;
+						if (provider === 'openai') {
+							// OpenAI logic
+							const apiKey = this._workspaceState.get(OPENAI_API_KEY);
+							const endpoint = this._workspaceState.get(OPENAI_API_ENDPOINT) || 'https://api.openai.com/v1/chat/completions';
+							const model = this._workspaceState.get(OPENAI_SELECTED_MODEL) || DEFAULT_OPENAI_MODEL;
+							const temperature = this._workspaceState.get(OPENAI_TEMPERATURE) || 1.0;
+							const userMessage = { text: message.text, sender: 'user' };
+							var cur_chatHistory = this._workspaceState.get(OLLAMA_CHAT_HISTORY, []);
+							cur_chatHistory.push(userMessage);
+							this._workspaceState.update(OLLAMA_CHAT_HISTORY, cur_chatHistory);
+							this._chatHistory = cur_chatHistory;
+							// Save to session
+							const sessions = getSessions(this._workspaceState);
+							const idx = sessions.findIndex(s => s.id === currentSessionId);
+							if (idx !== -1) {
+								sessions[idx].history = cur_chatHistory;
+								if (sessions[idx].name === 'New Session' && cur_chatHistory.length === 1) {
+									sessions[idx].name = message.text.length > 30 ? message.text.slice(0, 30) : message.text;
+								}
+								saveSessions(this._workspaceState, sessions);
+							}
+							// Call OpenAI API
+							try {
+								const messages = cur_chatHistory.map(m => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text }));
+								const requestBody = {
+									model,
+									messages,
+									temperature,
+									stream: true
+								};
+								const response = await fetch(endpoint, {
+									method: 'POST',
+									headers: {
+										'Content-Type': 'application/json',
+										'Authorization': `Bearer ${apiKey}`
+									},
+									body: JSON.stringify(requestBody)
+								});
+								if (!response.ok) throw new Error(`OpenAI API error: ${response.status} ${response.statusText}`);
+								// Streaming response handling
+								const reader = response.body.getReader();
+								const decoder = new TextDecoder();
+								let buffer = '';
+								let fullResponse = '';
+								while (true) {
+									const { value, done } = await reader.read();
+									if (done) break;
+									buffer += decoder.decode(value, { stream: false });
+									// OpenAI streams lines starting with 'data: '
+									while (true) {
+										const newlineIndex = buffer.indexOf('\n');
+										if (newlineIndex === -1) break;
+										let line = buffer.substring(0, newlineIndex).trim();
+										buffer = buffer.substring(newlineIndex + 1);
+										if (!line.startsWith('data:')) continue;
+										line = line.replace(/^data: /, '');
+										if (line === '[DONE]') {
+											if (this._webviewView) this._webviewView.webview.postMessage({ command: 'streamDone', sender: 'bot' });
+											break;
+										}
+										try {
+											const data = JSON.parse(line);
+											const delta = data.choices && data.choices[0] && data.choices[0].delta && data.choices[0].delta.content ? data.choices[0].delta.content : '';
+											if (delta) {
+												fullResponse += delta;
+												if (this._webviewView) this._webviewView.webview.postMessage({ command: 'addChunk', text: delta, sender: 'bot' });
+											}
+										} catch (err) {
+											// Ignore JSON parse errors for non-data lines
+										}
+									}
+								}
+								// Finalize
+								if (fullResponse) {
+									const botMessage = { text: fullResponse, sender: 'bot' };
+									cur_chatHistory.push(botMessage);
+									this._workspaceState.update(OLLAMA_CHAT_HISTORY, cur_chatHistory);
+									// Save updated session
+									const sessions = getSessions(this._workspaceState);
+									const idx = sessions.findIndex(s => s.id === currentSessionId);
+									if (idx !== -1) {
+										sessions[idx].history = cur_chatHistory;
+										saveSessions(this._workspaceState, sessions);
+									}
+								}
+							} catch (error) {
+								if (this._webviewView) {
+									this._webviewView.webview.postMessage({ command: 'addMessage', text: `Error: ${error.message}`, sender: 'bot' });
+									this._webviewView.webview.postMessage({ command: 'resetSendButton' });
+								}
+							}
+							// After OpenAI streaming completes or errors, update placeholder
+							if (this._webviewView) {
+								this._webviewView.webview.postMessage({ command: 'setModelName', modelName: `OpenAI (${openaiModel})` });
+							}
+							break;
+						}
+						// Existing Ollama logic...
 						const ollamaUrl = vscode.workspace.getConfiguration().get('vswizard.ollamaUrl') || 'http://localhost:11434';
 						const userMessage = { text: message.text, sender: 'user' };
 						//Get chatHistory from workspace state
@@ -343,17 +523,18 @@ function activate(context) {
 							const idx = sessions.findIndex(s => s.id === currentSessionId);
 							if (idx !== -1) {
 								sessions[idx].history = cur_chatHistory;
-								// If history has >2 messages, try to rename it
-								if (cur_chatHistory.length > 2 && cur_chatHistory.length % 2 === 0) {
-									try {
-										const selectedModel = this._workspaceState.get(OLLAMA_SELECTED_MODEL);
-										const model = selectedModel ? selectedModel.name : 'llama2';
-										const name = await generateSessionName(ollamaUrl, cur_chatHistory, model);
-										sessions[idx].name = name;
-										saveSessions(this._workspaceState, sessions);
-									} catch (e) { /* ignore name gen errors */ }
-								}
 								saveSessions(this._workspaceState, sessions);
+							}
+							// Always update placeholder after response
+							const provider = this._workspaceState.get(VSWIZARD_PROVIDER) || 'ollama';
+							if (this._webviewView) {
+								if (provider === 'openai') {
+									const openaiModel = this._workspaceState.get(OPENAI_SELECTED_MODEL) || DEFAULT_OPENAI_MODEL;
+									this._webviewView.webview.postMessage({ command: 'setModelName', modelName: `OpenAI (${openaiModel})` });
+								} else {
+									const selectedModel = this._workspaceState.get(OLLAMA_SELECTED_MODEL);
+									this._webviewView.webview.postMessage({ command: 'setModelName', modelName: selectedModel ? selectedModel.name : '<Select LLM please>' });
+								}
 							}
 						} catch (error) {
 							if (error.name === 'AbortError') {
@@ -445,6 +626,12 @@ function activate(context) {
 						} finally {
 							this._abortController = null;
 						}
+						// After Ollama streaming completes or errors, update placeholder
+						if (this._webviewView) {
+							const selectedModel = this._workspaceState.get(OLLAMA_SELECTED_MODEL);
+							const modelName = selectedModel ? selectedModel.name : '<Select LLM please>';
+							this._webviewView.webview.postMessage({ command: 'setModelName', modelName });
+						}
 						break;
 					}
 					case 'getFileContext': {
@@ -512,12 +699,103 @@ function activate(context) {
 						}
 						const fullComposedMessage = message.userMessage + fileContextText;
 						const displayComposedMessage = message.userMessage + displayFileContextText;
+						const tokenCount = countTokens(fullComposedMessage);
 
+						// After displaying file context, call AI with the composed message
 						webviewView.webview.postMessage({
 							command: 'displayUserMessageWithFileContext',
 							fullText: fullComposedMessage,
-							displayText: displayComposedMessage
+							displayText: displayComposedMessage,
+							tokenCount: tokenCount // Send token count to webview
 						});
+						// Call AI after getting file context
+						const providerForContext = this._workspaceState.get(VSWIZARD_PROVIDER) || 'ollama';
+						const userMsgForContext = { text: message.userMessage, sender: 'user' };
+						this._chatHistory.push(userMsgForContext);
+						this._workspaceState.update(OLLAMA_CHAT_HISTORY, this._chatHistory);
+						if (providerForContext === 'openai') {
+							// Call OpenAI API for file context
+							if (this._abortController) {
+								this._abortController.abort();
+							}
+							this._abortController = new AbortController();
+							(async () => {
+								try {
+									const apiKey = this._workspaceState.get(OPENAI_API_KEY);
+									const endpoint = this._workspaceState.get(OPENAI_API_ENDPOINT) || 'https://api.openai.com/v1/chat/completions';
+									const model = this._workspaceState.get(OPENAI_SELECTED_MODEL) || DEFAULT_OPENAI_MODEL;
+									const temperature = this._workspaceState.get(OPENAI_TEMPERATURE) || 1.0;
+									// Prepare messages from history
+									const messages = this._chatHistory.map(m => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text }));
+									messages.push({ role: 'user', content: fullComposedMessage });
+									const response = await fetch(endpoint, {
+										method: 'POST',
+										headers: {
+											'Content-Type': 'application/json',
+											'Authorization': `Bearer ${apiKey}`
+										},
+										body: JSON.stringify({ model, messages, temperature, stream: true }),
+										signal: this._abortController.signal
+									});
+									if (!response.ok) throw new Error(`OpenAI API error: ${response.status} ${response.statusText}`);
+									const reader = response.body.getReader();
+									const decoder = new TextDecoder();
+									let buffer = '';
+									let fullResponse = '';
+									while (true) {
+										const { value, done } = await reader.read();
+										if (done) break;
+										buffer += decoder.decode(value, { stream: false });
+										while (true) {
+											const newlineIndex = buffer.indexOf('\n');
+											if (newlineIndex === -1) break;
+											let line = buffer.substring(0, newlineIndex).trim();
+											buffer = buffer.substring(newlineIndex + 1);
+											if (!line.startsWith('data:')) continue;
+											line = line.replace(/^data: /, '');
+											if (line === '[DONE]') {
+												webviewView.webview.postMessage({ command: 'streamDone', sender: 'bot' });
+												break;
+											}
+											const data = JSON.parse(line);
+											const delta = data.choices?.[0]?.delta?.content;
+											if (delta) {
+												fullResponse += delta;
+												webviewView.webview.postMessage({ command: 'addChunk', text: delta, sender: 'bot' });
+											}
+										}
+									}
+									if (fullResponse) {
+										const botMessage = { text: fullResponse, sender: 'bot' };
+										this._chatHistory.push(botMessage);
+										this._workspaceState.update(OLLAMA_CHAT_HISTORY, this._chatHistory);
+									}
+								} catch (error) {
+									webviewView.webview.postMessage({ command: 'addMessage', text: `Error: ${error.message}`, sender: 'bot' });
+									webviewView.webview.postMessage({ command: 'resetSendButton' });
+								} finally {
+									this._abortController = null;
+								}
+							})();
+						} else {
+							// Use Ollama provider to generate response
+							if (this._abortController) {
+								this._abortController.abort();
+							}
+							this._abortController = new AbortController();
+							sendMessageToOllama(
+								vscode.workspace.getConfiguration().get('vswizard.ollamaUrl') || 'http://localhost:11434',
+								fullComposedMessage,
+								this._workspaceState,
+								webviewView,
+								this._chatHistory,
+								OLLAMA_CHAT_HISTORY,
+								OLLAMA_PARTIAL_RESPONSE,
+								null,
+								this._abortController.signal
+							);
+						}
+
 						break;
 					}
 					case 'stop': {
@@ -659,7 +937,7 @@ async function listOllamaModels(ollamaUrl) {
 			// Extract context window size if available
 			let contextLength = 2048; // Default fallback
 			if (details && typeof details === 'object' && details['details']) {
-				let para_name = details['details']['family']+".context_length";
+				let para_name = details['details']['family'] + ".context_length";
 				// Use optional chaining and type checks to avoid TS errors
 				if (typeof details['model_info'] === 'object' && details['model_info'] !== null &&
 					details['model_info'][para_name] !== null &&
@@ -684,7 +962,7 @@ async function listOllamaModels(ollamaUrl) {
 	return modelsWithDetails;
 }
 
-// Helper to build prompt from chat history, respecting context window size
+// Helper to build prompt from chat history, respecting contextLength
 function buildPromptFromHistory(chatHistory, userMessage, contextLength) {
 	// Format: alternating 'User:' and 'Bot:'
 	const formatted = [];
@@ -710,7 +988,7 @@ function buildPromptFromHistory(chatHistory, userMessage, contextLength) {
 
 
 // This method is called when your extension is deactivated
-function deactivate() {}
+function deactivate() { }
 
 module.exports = {
 	activate,

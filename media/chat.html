@@ -212,6 +212,8 @@
 
         let isStreaming = false;
         let originalSendHandler = null;
+        const SEND_TEXT = 'Send';
+        const STOP_TEXT = 'Stop';
 
         imagebutton.addEventListener('click', () => {
             imageinput.click();
@@ -235,9 +237,10 @@
             sendbutton.disabled = false;
             sendbutton.onclick = () => {
                 vscode.postMessage({ command: 'stop' });
-                sendbutton.disabled = true; // Prevent multiple stop requests
+                setSendButtonToSend(); // Optimistically revert UI
             };
             wizardLogo.classList.add('thinking-flash'); // Add flashing class
+            isStreaming = true;
         }
 
         function setSendButtonToSend() {
@@ -245,9 +248,11 @@
             sendbutton.disabled = false;
             sendbutton.onclick = originalSendHandler;
             wizardLogo.classList.remove('thinking-flash'); // Remove flashing class
+            isStreaming = false;
         }
 
         let currentModelName = null;
+        let PROMPT_TEXT_DEFAULT = 'Ask your message...';
 
         // Save the original send handler
         originalSendHandler = function () {
@@ -257,11 +262,9 @@
             }
             const message = messageinput.value;
             if (message.trim()) {
-                addMessage(message, 'user');
+                setSendButtonToStop(); // Set to Stop immediately on send
                 vscode.postMessage({ command: 'sendMessage', text: message });
                 messageinput.value = '';
-                setSendButtonToStop();
-                isStreaming = true;
             }
         };
         sendbutton.onclick = originalSendHandler;
@@ -271,10 +274,29 @@
             switch (message.command) {
                 case 'setModelName':
                     currentModelName = message.modelName;
-                    messageinput.placeholder = `Ask ${message.modelName}...`;
+                    if (currentModelName.startsWith('OpenAI (')) {
+                        messageinput.placeholder = `Ask ${currentModelName}...`;
+                    } else if (currentModelName && currentModelName !== '<Select LLM please>') {
+                        messageinput.placeholder = `Ask ${currentModelName}...`;
+                    } else {
+                        messageinput.placeholder = PROMPT_TEXT_DEFAULT;
+                    }
+                    break;
+                case 'setProvider':
+                    if (message.provider === 'openai') {
+                        const model = currentModelName && currentModelName.startsWith('OpenAI (') ? currentModelName : 'OpenAI (gpt-3.5-turbo)';
+                        messageinput.placeholder = `Ask ${model}...`;
+                    } else {
+                        messageinput.placeholder = PROMPT_TEXT_DEFAULT;
+                    }
                     break;
                 case 'resetInput':
-                    messageinput.placeholder = PROMPT_TEXT_DEFAULT;
+                    // On resetInput, show 'Ask ...' with model name if available
+                    if (currentModelName && currentModelName !== '<Select LLM please>') {
+                        messageinput.placeholder = `Ask ${currentModelName}...`;
+                    } else {
+                        messageinput.placeholder = PROMPT_TEXT_DEFAULT;
+                    }
                     break;
                 // other cases handled below
             }
@@ -285,21 +307,36 @@
             switch (message.command) {
                 case 'addMessage':
                     addMessage(message.text, message.sender);
+                    setSendButtonToSend(); // Always reset after a full message
                     break;
                 case 'addChunk':
                     addChunk(message.text, message.sender);
+                    if (!isStreaming) setSendButtonToStop(); // Set to Stop on first chunk
                     break;
                 case 'streamDone':
                     finalizeStream();
+                    setSendButtonToSend(); // Reset to Send when stream ends
+                    break;
+                case 'resetSendButton':
+                    setSendButtonToSend(); // Reset on explicit command
                     break;
                 case 'resetInput':
                     messageinput.value = '';
-                    setSendButtonToSend();
+                    setSendButtonToSend(); // Reset on input reset
                     break;
                 case 'clearHistory':
                     // Clear all existing messages
                     while (chatbox.firstChild) {
                         chatbox.removeChild(chatbox.firstChild);
+                    }
+                    setSendButtonToSend();
+                    // Reset file and image upload UI
+                    if (typeof fileContextSelection !== 'undefined') fileContextSelection = "none";
+                    if (typeof fileContextButton !== 'undefined') fileContextButton.textContent = '+File';
+                    if (typeof imageinput !== 'undefined') imageinput.value = '';
+                    if (typeof imagebutton !== 'undefined') {
+                        imagebutton.textContent = lastMultimodal ? IMG_TEXT : 'Image Upload Not Supported';
+                        imagebutton.disabled = !lastMultimodal;
                     }
                     break;
                 case 'loadHistory':
@@ -312,10 +349,22 @@
                         let displayText = msg.text.replace(/\[File Content Start\]\n```[\s\S]*?```\n\[File Content End\]/g, '');
                         addMessage(displayText, msg.sender);
                     });
+                    setSendButtonToSend();
+                    // If history is empty, also reset file/image UI
+                    if (Array.isArray(message.history) && message.history.length === 0) {
+                        if (typeof fileContextSelection !== 'undefined') fileContextSelection = "none";
+                        if (typeof fileContextButton !== 'undefined') fileContextButton.textContent = '+File';
+                        if (typeof imageinput !== 'undefined') imageinput.value = '';
+                        if (typeof imagebutton !== 'undefined') {
+                            imagebutton.textContent = lastMultimodal ? IMG_TEXT : 'Image Upload Not Supported';
+                            imagebutton.disabled = !lastMultimodal;
+                        }
+                    }
                     break;
                 case 'setMultimodal':
-                    imagebutton.disabled = !message.multimodal;
-                    imagebutton.textContent = message.multimodal ? IMG_TEXT : 'Image Upload Not Supported';
+                    lastMultimodal = !!message.multimodal;
+                    imagebutton.disabled = !lastMultimodal;
+                    imagebutton.textContent = lastMultimodal ? IMG_TEXT : 'Image Upload Not Supported';
                     break;
             }
         });
@@ -470,14 +519,16 @@
                     setSendButtonToStop();
                     isStreaming = true;
                     break;
-                case 'displayUserMessageWithFileContext':
-                    // Display the simplified message to the user
-                    addMessage(message.displayText, 'user'); // Removed to prevent duplicate user message display
-                    // Then send the full message to the AI via the extension host
-                    vscode.postMessage({ command: 'sendMessage', text: message.fullText });
-                    setSendButtonToStop();
-                    isStreaming = true;
+                case 'displayUserMessageWithFileContext': {
+                    // Show the composed message and token count
+                    // Add the user message to the chatbox with token count
+                    let displayText = message.displayText;
+                    if (typeof message.tokenCount === 'number') {
+                        displayText += `<div style="font-size:0.9em;color:#888;">Token count: ${message.tokenCount}</div>`;
+                    }
+                    addMessage(displayText, 'user');
                     break;
+                }
             }
         });
 
