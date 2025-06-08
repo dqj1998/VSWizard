@@ -422,7 +422,7 @@ class ChatViewProvider {
 								this._webviewView.webview.postMessage({ command: 'setModelName', modelName: `OpenAI (${openaiModel})` });
 							}
 						} else {
-							await sendMessageToOllama(this, image);
+							await handleOllamaChat(this, image);
 							if (this._webviewView) {
 								const selectedModel = this._workspaceState.get(OLLAMA_SELECTED_MODEL);
 								const modelName = selectedModel ? selectedModel.name : '<Select LLM please>';
@@ -532,7 +532,7 @@ class ChatViewProvider {
 							await handleOpenAIChat(this, images);
 						} else {
 							// Use Ollama provider to generate response		
-							await sendMessageToOllama(this, images);
+							await handleOllamaChat(this, images);
 						}
 
 						break;
@@ -668,7 +668,7 @@ async function handleOpenAIChat(providerInstance, images = null) {
 	}
 }
 
-async function sendMessageToOllama(providerInstance, images = null) {
+async function handleOllamaChat(providerInstance, images = null) {
 	const ollamaUrl = vscode.workspace.getConfiguration().get('vswizard.ollamaUrl') || 'http://localhost:11434';
 	const workspaceState = providerInstance._workspaceState;
 	const webviewView = providerInstance._webviewView;
