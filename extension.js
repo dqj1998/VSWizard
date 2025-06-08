@@ -387,65 +387,47 @@ class ChatViewProvider {
 					case 'sendMessage': {
 						const provider = this._workspaceState.get(VSWIZARD_PROVIDER) || 'ollama';
 						let openaiModel = this._workspaceState.get(OPENAI_SELECTED_MODEL) || DEFAULT_OPENAI_MODEL;
-						if (provider === 'openai') {
-							// OpenAI logic (refactored)
-							const userMessage = { text: message.text, sender: 'user' };
-							var cur_chatHistory = this._workspaceState.get(OLLAMA_CHAT_HISTORY, []);
-							cur_chatHistory.push(userMessage);
-							this._workspaceState.update(OLLAMA_CHAT_HISTORY, cur_chatHistory);
-							this._chatHistory = cur_chatHistory;
-							// Save to session
-							const sessions = getSessions(this._workspaceState);
-							const idx = sessions.findIndex(s => s.id === currentSessionId);
-							if (idx !== -1) {
-								sessions[idx].history = cur_chatHistory;
-								if (sessions[idx].name === 'New Session' && cur_chatHistory.length === 1) {
-									sessions[idx].name = message.text.length > 30 ? message.text.slice(0, 30) : message.text;
-								}
-								saveSessions(this._workspaceState, sessions);
-							}
-							// Abort any previous stream before starting a new one
-							if (this._abortController) {
-								this._abortController.abort();
-							}
-							this._abortController = new AbortController();
-							const image = this._pendingImages || null;
-							this._pendingImages = null;
-							await handleOpenAIChat(this, image);
-							// After OpenAI streaming completes or errors, update placeholder
-							if (this._webviewView) {
-								this._webviewView.webview.postMessage({ command: 'setModelName', modelName: `OpenAI (${openaiModel})` });
-							}
-							break;
-						}
-						// Ollama logic with image support
-						const userMessage = { text: message.text, sender: 'user' };
-						var cur_chatHistory = this._workspaceState.get(OLLAMA_CHAT_HISTORY, []);
+
+						const userMessageText = message.text;
+						const userMessage = { text: userMessageText, sender: 'user' };
+
+						// Update chat history and session
+						let cur_chatHistory = this._workspaceState.get(OLLAMA_CHAT_HISTORY, []);
 						cur_chatHistory.push(userMessage);
 						this._workspaceState.update(OLLAMA_CHAT_HISTORY, cur_chatHistory);
 						this._chatHistory = cur_chatHistory;
-						// Save to session
+
 						const sessions = getSessions(this._workspaceState);
 						const idx = sessions.findIndex(s => s.id === currentSessionId);
 						if (idx !== -1) {
 							sessions[idx].history = cur_chatHistory;
 							if (sessions[idx].name === 'New Session' && cur_chatHistory.length === 1) {
-								sessions[idx].name = message.text.length > 30 ? message.text.slice(0, 30) : message.text;
+								sessions[idx].name = userMessageText.length > 30 ? userMessageText.slice(0, 30) : userMessageText;
 							}
 							saveSessions(this._workspaceState, sessions);
 						}
+
+						// Abort any previous stream before starting a new one
 						if (this._abortController) {
 							this._abortController.abort();
 						}
 						this._abortController = new AbortController();
 						const image = this._pendingImages || null;
 						this._pendingImages = null;
-						await sendMessageToOllama(this, image);
-						// After Ollama streaming completes or errors, update placeholder
-						if (this._webviewView) {
-							const selectedModel = this._workspaceState.get(OLLAMA_SELECTED_MODEL);
-							const modelName = selectedModel ? selectedModel.name : '<Select LLM please>';
-							this._webviewView.webview.postMessage({ command: 'setModelName', modelName });
+
+						// Call AI based on provider
+						if (provider === 'openai') {
+							await handleOpenAIChat(this, image);
+							if (this._webviewView) {
+								this._webviewView.webview.postMessage({ command: 'setModelName', modelName: `OpenAI (${openaiModel})` });
+							}
+						} else {
+							await sendMessageToOllama(this, image);
+							if (this._webviewView) {
+								const selectedModel = this._workspaceState.get(OLLAMA_SELECTED_MODEL);
+								const modelName = selectedModel ? selectedModel.name : '<Select LLM please>';
+								this._webviewView.webview.postMessage({ command: 'setModelName', modelName });
+							}
 						}
 						break;
 					}
@@ -567,13 +549,21 @@ class ChatViewProvider {
 						await vscode.commands.executeCommand('vswizard.listModels');
 						break;
 					}
-					case 'getCurrentOllamaModel': {
-						// Respond to webview's request for current Ollama model name
-						const selectedModel = this._workspaceState.get(OLLAMA_SELECTED_MODEL);
-						if (selectedModel && this._webviewView) {
-							this._webviewView.webview.postMessage({ command: 'setModelName', modelName: selectedModel.name });
-						} else if (this._webviewView) {
-							this._webviewView.webview.postMessage({ command: 'setModelName', modelName: '<Select LLM please>' });
+					case 'getCurrentModel': {
+						// Respond to webview's request for current model name based on provider
+						const provider = this._workspaceState.get(VSWIZARD_PROVIDER) || 'ollama';
+						if (provider === 'openai') {
+							const openaiModel = this._workspaceState.get(OPENAI_SELECTED_MODEL) || DEFAULT_OPENAI_MODEL;
+							if (this._webviewView) {
+								this._webviewView.webview.postMessage({ command: 'setModelName', modelName: `OpenAI (${openaiModel})` });
+							}
+						} else {
+							const selectedModel = this._workspaceState.get(OLLAMA_SELECTED_MODEL);
+							if (selectedModel && this._webviewView) {
+								this._webviewView.webview.postMessage({ command: 'setModelName', modelName: selectedModel.name });
+							} else if (this._webviewView) {
+								this._webviewView.webview.postMessage({ command: 'setModelName', modelName: '<Select LLM please>' });
+							}
 						}
 						break;
 					}

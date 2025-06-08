@@ -279,19 +279,8 @@
             const message = event.data;
             switch (message.command) {
                 case 'setProvider':
-                    if (message.provider === 'openai') {
-                        // Always show OpenAI model name in placeholder
-                        const model = currentModelName ? currentModelName : '<Select LLM please>';
-                        messageinput.placeholder = `Ask ${model}...`;
-                    } else if (message.provider === 'ollama') {
-                        // Clear model name and prompt for selection
-                        currentModelName = '';
-                        messageinput.placeholder = PROMPT_TEXT_DEFAULT;
-                        // Optionally, request the extension to send the current Ollama model name
-                        vscode.postMessage({ command: 'getCurrentOllamaModel' });
-                    } else {
-                        messageinput.placeholder = PROMPT_TEXT_DEFAULT;
-                    }
+                    // Always request the current model name from the extension for both providers
+                    vscode.postMessage({ command: 'getCurrentModel' });
                     break;
                 case 'setModelName':
                     currentModelName = message.modelName;
