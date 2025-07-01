@@ -298,6 +298,10 @@ function activate(context) {
 		vscode.window.showInformationMessage('OpenAI parameters updated.');
 	});
 	context.subscriptions.push(setOpenAIParamsCommand);
+
+// Dispatch setModelName command to update placeholder
+const openaiModel = context.workspaceState.get(OPENAI_SELECTED_MODEL) || DEFAULT_OPENAI_MODEL;
+chatViewProviderInstance?._webviewView?.webview.postMessage({ command: 'setModelName', modelName: `OpenAI (${openaiModel})` });
 }
 
 // Simple token count: split by whitespace and punctuation
