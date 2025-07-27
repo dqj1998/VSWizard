@@ -3,6 +3,11 @@
 const vscode = require('vscode');
 const fs = require('fs'); // Import the 'fs' module
 
+// Import MCP components
+const MCPServerManager = require('./src/mcp/MCPServerManager');
+const MCPUIManager = require('./src/mcp/MCPUIManager');
+const { registerMcpCommands } = require('./src/mcp/MCPCommandIntegration');
+
 // Constants for workspace state keys
 const OLLAMA_PARTIAL_RESPONSE = 'ollamaPartialResponse';
 const OLLAMA_CHAT_HISTORY = 'ollamaChatHistory';
@@ -28,6 +33,8 @@ const DEFAULT_OPENAI_MODEL = 'gpt-4.1-mini';
  */
 let chatViewProviderInstance = null;
 let currentSessionId = null; // Track the current session
+let mcpServerManager = null; // MCP Server Manager instance
+let mcpUIManager = null; // MCP UI Manager instance
 
 function getSessions(workspaceState) {
 	return workspaceState.get(VSWIZARD_SESSIONS, []);
@@ -80,11 +87,39 @@ async function generateSessionName(ollamaUrl, history, model) {
 	return name || 'Untitled Session';
 }
 
-function activate(context) {
+async function activate(context) {
 	console.log('VSWizard extension activating...');
 	// Use the console to output diagnostic information (console.log) and errors (console.error)
 	// This line of code will only be executed once when your extension is activated
 	console.log('Congratulations, your extension "vswizard" is now active!');
+
+	// Initialize MCP Server Manager
+	const outputChannel = vscode.window.createOutputChannel('VSWizard MCP');
+	mcpServerManager = new MCPServerManager(context, outputChannel);
+	
+	// Set up MCP event handlers
+	mcpServerManager.on('serverInstalled', (server) => {
+		vscode.window.showInformationMessage(`MCP Server installed: ${server.name}`);
+	});
+	
+	mcpServerManager.on('installFailed', ({ url, error }) => {
+		vscode.window.showErrorMessage(`Failed to install MCP server from ${url}: ${error.message}`);
+	});
+	
+	mcpServerManager.on('serverStarted', (serverId) => {
+		vscode.window.showInformationMessage(`MCP Server started: ${serverId}`);
+	});
+	
+	mcpServerManager.on('serverStopped', (serverId) => {
+		vscode.window.showInformationMessage(`MCP Server stopped: ${serverId}`);
+	});
+
+	// Initialize MCP UI Manager
+	mcpUIManager = new MCPUIManager(context, mcpServerManager);
+	await mcpUIManager.initialize();
+	
+	// Register MCP commands
+	registerMcpCommands(context, mcpServerManager);
 
 	// The command has been defined in the package.json file
 	// Now provide the implementation of the command with  registerCommand
@@ -125,6 +160,29 @@ function activate(context) {
 	context.subscriptions.push(
 		vscode.window.registerWebviewViewProvider('vswizard-chat', chatViewProviderInstance)
 	);
+
+	// Set up MCP UI state change handlers
+	if (mcpUIManager) {
+		mcpUIManager.on('uiStateChanged', (state) => {
+			// Update webview with latest MCP data
+			if (chatViewProviderInstance && chatViewProviderInstance._webviewView) {
+				chatViewProviderInstance._webviewView.webview.postMessage({
+					command: 'mcpUpdateData',
+					data: state.dropdownData
+				});
+			}
+		});
+
+		mcpUIManager.on('serverSelectionChanged', (data) => {
+			// Update webview with selection changes
+			if (chatViewProviderInstance && chatViewProviderInstance._webviewView) {
+				chatViewProviderInstance._webviewView.webview.postMessage({
+					command: 'mcpUpdateData',
+					data: mcpUIManager.getMCPDropdownData()
+				});
+			}
+		});
+	}
 
 	const listModelsCommand = vscode.commands.registerCommand('vswizard.listModels', async function () {
 		const ollamaUrl = vscode.workspace.getConfiguration().get('vswizard.ollamaUrl') || 'http://localhost:11434';
@@ -571,6 +629,67 @@ class ChatViewProvider {
 						}
 						break;
 					}
+					case 'mcpGetData': {
+						// Send MCP dropdown data to webview
+						if (mcpUIManager) {
+							const mcpData = mcpUIManager.getMCPDropdownData();
+							webviewView.webview.postMessage({
+								command: 'mcpUpdateData',
+								data: mcpData
+							});
+						}
+						break;
+					}
+					case 'mcpToggleSelection': {
+						// Toggle MCP server selection
+						if (mcpUIManager && message.serverId) {
+							mcpUIManager.toggleServerSelection(message.serverId);
+						}
+						break;
+					}
+					case 'mcpConnectServer': {
+						// Connect MCP server
+						if (mcpServerManager && message.serverId) {
+							try {
+								await mcpServerManager.startServer(message.serverId);
+							} catch (error) {
+								vscode.window.showErrorMessage(`Failed to connect MCP server: ${error.message}`);
+							}
+						}
+						break;
+					}
+					case 'mcpDisconnectServer': {
+						// Disconnect MCP server
+						if (mcpServerManager && message.serverId) {
+							try {
+								await mcpServerManager.stopServer(message.serverId);
+							} catch (error) {
+								vscode.window.showErrorMessage(`Failed to disconnect MCP server: ${error.message}`);
+							}
+						}
+						break;
+					}
+					case 'mcpRestartServer': {
+						// Restart MCP server
+						if (mcpServerManager && message.serverId) {
+							try {
+								await mcpServerManager.restartServer(message.serverId);
+							} catch (error) {
+								vscode.window.showErrorMessage(`Failed to restart MCP server: ${error.message}`);
+							}
+						}
+						break;
+					}
+					case 'mcpInstall': {
+						// Trigger MCP server installation
+						await vscode.commands.executeCommand('vswizard.mcpInstall');
+						break;
+					}
+					case 'mcpSettings': {
+						// Open MCP settings
+						await vscode.commands.executeCommand('workbench.action.openSettings', 'vswizard.mcp');
+						break;
+					}
 				}
 			}
 		);
@@ -583,7 +702,6 @@ async function handleOpenAIChat(providerInstance, images = null) {
 	const workspaceState = providerInstance._workspaceState;
 	const webviewView = providerInstance._webviewView;
 	const abortController = providerInstance._abortController;
-
 	const apiKey = workspaceState.get(OPENAI_API_KEY);
 	const endpoint = workspaceState.get(OPENAI_API_ENDPOINT) || 'https://api.openai.com/v1/chat/completions';
 	const model = workspaceState.get(OPENAI_SELECTED_MODEL) || DEFAULT_OPENAI_MODEL;
@@ -839,9 +957,15 @@ function buildPromptFromHistory(chatHistory, contextLength) {
 	return prompt.trim();
 }
 
-
 // This method is called when your extension is deactivated
-function deactivate() { }
+function deactivate() {
+	if (mcpUIManager) {
+		mcpUIManager.dispose();
+	}
+	if (mcpServerManager) {
+		mcpServerManager.dispose();
+	}
+}
 
 module.exports = {
 	activate,

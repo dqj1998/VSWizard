@@ -179,6 +179,208 @@ code {
         .thinking-flash {
             animation: flash 1s infinite alternate;
         }
+
+        /* MCP Button and Popup Styles */
+        #mcpbutton {
+            padding: 5px 10px;
+            position: relative;
+            margin-left: 5px;
+            background-color: #007acc;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        #mcpbutton:hover {
+            background-color: #005a9e;
+        }
+
+        #mcpbutton:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+
+        #mcp-popup {
+            display: none;
+            position: absolute;
+            bottom: 40px;
+            right: 0;
+            background: #fff;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            z-index: 200;
+            min-width: 300px;
+            max-width: 400px;
+            max-height: 400px;
+            overflow: hidden;
+        }
+
+        #mcp-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        #mcp-title {
+            font-weight: bold;
+            color: #333;
+        }
+
+        #mcp-close {
+            background: none;
+            border: none;
+            font-size: 18px;
+            cursor: pointer;
+            color: #666;
+            padding: 0;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #mcp-close:hover {
+            color: #333;
+        }
+
+        #mcp-content {
+            max-height: 320px;
+            overflow-y: auto;
+        }
+
+        #mcp-servers-list {
+            padding: 8px 0;
+        }
+
+        .mcp-server-item {
+            display: flex;
+            align-items: center;
+            padding: 8px 16px;
+            cursor: pointer;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .mcp-server-item:hover {
+            background: #f8f9fa;
+        }
+
+        .mcp-server-item:last-child {
+            border-bottom: none;
+        }
+
+        .mcp-server-checkbox {
+            margin-right: 12px;
+            width: 16px;
+            height: 16px;
+        }
+
+        .mcp-server-info {
+            flex: 1;
+        }
+
+        .mcp-server-name {
+            font-weight: 500;
+            color: #333;
+            margin-bottom: 2px;
+        }
+
+        .mcp-server-status {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .mcp-server-status.connected {
+            color: #28a745;
+        }
+
+        .mcp-server-status.disconnected {
+            color: #dc3545;
+        }
+
+        .mcp-server-status.error {
+            color: #ffc107;
+        }
+
+        .mcp-server-actions {
+            display: flex;
+            gap: 4px;
+        }
+
+        .mcp-server-action {
+            background: none;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 11px;
+            cursor: pointer;
+            color: #666;
+        }
+
+        .mcp-server-action:hover {
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        .mcp-server-action.connect {
+            border-color: #28a745;
+            color: #28a745;
+        }
+
+        .mcp-server-action.disconnect {
+            border-color: #dc3545;
+            color: #dc3545;
+        }
+
+        #mcp-actions {
+            padding: 12px 16px;
+            border-top: 1px solid #e9ecef;
+            background: #f8f9fa;
+            display: flex;
+            gap: 8px;
+        }
+
+        #mcp-actions button {
+            flex: 1;
+            padding: 8px 12px;
+            border: 1px solid #007acc;
+            background: #007acc;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        #mcp-actions button:hover {
+            background: #005a9e;
+        }
+
+        #mcp-actions button:last-child {
+            background: #6c757d;
+            border-color: #6c757d;
+        }
+
+        #mcp-actions button:last-child:hover {
+            background: #545b62;
+        }
+
+        .mcp-empty-state {
+            padding: 24px 16px;
+            text-align: center;
+            color: #666;
+        }
+
+        .mcp-empty-state .icon {
+            font-size: 24px;
+            margin-bottom: 8px;
+            opacity: 0.5;
+        }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
@@ -199,12 +401,28 @@ code {
         <div id="input-row-bottom">
             <button id="filecontextbutton" type="button" aria-label="File Context Button"></button>
             <button id="imagebutton" aria-label="Image Upload Button" title="+Img">+Img</button>
+            <button id="mcpbutton" type="button" aria-label="MCP Server Button" title="MCP Server">MCP Server(0)</button>
             <div id="filecontext-popup">
                 <ul>
                     <li id="fc-current">Current file</li>
                     <li id="fc-opening">Opening files</li>
                     <li id="fc-non">Non files</li>
                 </ul>
+            </div>
+            <div id="mcp-popup">
+                <div id="mcp-header">
+                    <span id="mcp-title">MCP Server Management</span>
+                    <button id="mcp-close" type="button">×</button>
+                </div>
+                <div id="mcp-content">
+                    <div id="mcp-servers-list">
+                        <!-- MCP servers will be populated here -->
+                    </div>
+                    <div id="mcp-actions">
+                        <button id="mcp-install" type="button">Install New Server</button>
+                        <button id="mcp-settings" type="button">Settings</button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -566,6 +784,166 @@ code {
                 }
             }
         });
+
+        // --- MCP Server Management Logic ---
+        const mcpButton = document.getElementById('mcpbutton');
+        const mcpPopup = document.getElementById('mcp-popup');
+        const mcpClose = document.getElementById('mcp-close');
+        const mcpServersList = document.getElementById('mcp-servers-list');
+        const mcpInstallButton = document.getElementById('mcp-install');
+        const mcpSettingsButton = document.getElementById('mcp-settings');
+
+        let mcpData = {
+            servers: [],
+            selectedCount: 0,
+            totalInstalled: 0,
+            totalActive: 0
+        };
+
+        // Update MCP button text
+        function updateMCPButton() {
+            mcpButton.textContent = `MCP Server(${mcpData.totalInstalled})`;
+            if (mcpData.totalActive > 0) {
+                mcpButton.style.backgroundColor = '#28a745';
+            } else {
+                mcpButton.style.backgroundColor = '#007acc';
+            }
+        }
+
+        // Render MCP servers list
+        function renderMCPServers() {
+            if (mcpData.servers.length === 0) {
+                mcpServersList.innerHTML = `
+                    <div class="mcp-empty-state">
+                        <div class="icon">📦</div>
+                        <div>No MCP Servers</div>
+                        <div style="font-size: 12px; margin-top: 4px;">Click "Install New Server" to get started</div>
+                    </div>
+                `;
+                return;
+            }
+
+            mcpServersList.innerHTML = mcpData.servers.map(server => {
+                const statusClass = server.status === 'connected' ? 'connected' :
+                                  server.status === 'error' ? 'error' : 'disconnected';
+                const statusText = server.status === 'connected' ?
+                    `Connected • ${server.toolCount} tools` :
+                    server.status === 'error' ? 'Connection error' : 'Disconnected';
+
+                return `
+                    <div class="mcp-server-item" data-server-id="${server.id}">
+                        <input type="checkbox" class="mcp-server-checkbox"
+                               ${server.isSelected ? 'checked' : ''}
+                               onchange="toggleMCPServerSelection('${server.id}')">
+                        <div class="mcp-server-info">
+                            <div class="mcp-server-name">${server.name}</div>
+                            <div class="mcp-server-status ${statusClass}">${statusText}</div>
+                        </div>
+                        <div class="mcp-server-actions">
+                            ${server.isActive ?
+                                `<button class="mcp-server-action disconnect" onclick="disconnectMCPServer('${server.id}')">Disconnect</button>` :
+                                `<button class="mcp-server-action connect" onclick="connectMCPServer('${server.id}')">Connect</button>`
+                            }
+                            <button class="mcp-server-action" onclick="restartMCPServer('${server.id}')">Restart</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Toggle MCP server selection
+        function toggleMCPServerSelection(serverId) {
+            vscode.postMessage({
+                command: 'mcpToggleSelection',
+                serverId: serverId
+            });
+        }
+
+        // Connect MCP server
+        function connectMCPServer(serverId) {
+            vscode.postMessage({
+                command: 'mcpConnectServer',
+                serverId: serverId
+            });
+        }
+
+        // Disconnect MCP server
+        function disconnectMCPServer(serverId) {
+            vscode.postMessage({
+                command: 'mcpDisconnectServer',
+                serverId: serverId
+            });
+        }
+
+        // Restart MCP server
+        function restartMCPServer(serverId) {
+            vscode.postMessage({
+                command: 'mcpRestartServer',
+                serverId: serverId
+            });
+        }
+
+        // Show/hide MCP popup
+        mcpButton.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (mcpPopup.style.display === 'block') {
+                mcpPopup.style.display = 'none';
+            } else {
+                // Request latest MCP data
+                vscode.postMessage({ command: 'mcpGetData' });
+                mcpPopup.style.display = 'block';
+            }
+        });
+
+        // Close MCP popup
+        mcpClose.addEventListener('click', () => {
+            mcpPopup.style.display = 'none';
+        });
+
+        // Install new MCP server
+        mcpInstallButton.addEventListener('click', () => {
+            mcpPopup.style.display = 'none';
+            vscode.postMessage({ command: 'mcpInstall' });
+        });
+
+        // Open MCP settings
+        mcpSettingsButton.addEventListener('click', () => {
+            mcpPopup.style.display = 'none';
+            vscode.postMessage({ command: 'mcpSettings' });
+        });
+
+        // Hide popup on click outside
+        document.addEventListener('click', (e) => {
+            if (!mcpPopup.contains(e.target) && e.target !== mcpButton) {
+                mcpPopup.style.display = 'none';
+            }
+        });
+
+        // Handle MCP messages from extension
+        window.addEventListener('message', event => {
+            const message = event.data;
+            switch (message.command) {
+                case 'mcpUpdateData':
+                    mcpData = message.data;
+                    updateMCPButton();
+                    renderMCPServers();
+                    break;
+                case 'mcpServerStatusChanged':
+                    // Update specific server status
+                    const server = mcpData.servers.find(s => s.id === message.serverId);
+                    if (server) {
+                        server.status = message.status;
+                        server.isActive = message.isActive;
+                        server.toolCount = message.toolCount || 0;
+                        renderMCPServers();
+                        updateMCPButton();
+                    }
+                    break;
+            }
+        });
+
+        // Initialize MCP UI
+        updateMCPButton();
 
     </script>
 </body>

@@ -54,6 +54,26 @@
       {
         "command": "vswizard.setOpenAIParams",
         "title": "wzd: Set OpenAI API Parameters"
+      },
+      {
+        "command": "vswizard.mcpInstall",
+        "title": "wzd: Install MCP Server"
+      },
+      {
+        "command": "vswizard.mcpList",
+        "title": "wzd: List MCP Servers"
+      },
+      {
+        "command": "vswizard.mcpStart",
+        "title": "wzd: Start MCP Server"
+      },
+      {
+        "command": "vswizard.mcpStop",
+        "title": "wzd: Stop MCP Server"
+      },
+      {
+        "command": "vswizard.mcpUninstall",
+        "title": "wzd: Uninstall MCP Server"
       }
     ],
     "viewsContainers": {
@@ -82,6 +102,38 @@
           "type": "string",
           "default": "http://localhost:11434",
           "description": "The URL of the local Ollama instance."
+        },
+        "vswizard.mcp.connectionTimeout": {
+          "type": "number",
+          "default": 30000,
+          "minimum": 5000,
+          "maximum": 120000,
+          "description": "Connection timeout for MCP servers in milliseconds (5-120 seconds)"
+        },
+        "vswizard.mcp.retryCount": {
+          "type": "number",
+          "default": 3,
+          "minimum": 0,
+          "maximum": 10,
+          "description": "Number of retry attempts for failed MCP server connections"
+        },
+        "vswizard.mcp.autoReconnectInterval": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 1000,
+          "maximum": 60000,
+          "description": "Auto-reconnect interval for MCP servers in milliseconds (1-60 seconds)"
+        },
+        "vswizard.mcp.logLevel": {
+          "type": "string",
+          "enum": ["error", "warn", "info", "debug"],
+          "default": "info",
+          "description": "Log level for MCP server operations"
+        },
+        "vswizard.mcp.autoStartServers": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start MCP servers when extension activates"
         }
       }
     }
