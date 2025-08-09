@@ -74,13 +74,17 @@ After launching, select **OpenAI** as the provider and start chatting.
 
 ## Release Notes
 
-### 0.0.1
+### 0.0.3
 
-Initial basic implementation with core chat, model listing, history, and basic image support.
+Text area input and <think> tag support.
 
 ### 0.0.2
 
 Files attchement support, better UI
+
+### 0.0.1
+
+Initial basic implementation with core chat, model listing, history, and basic image support.
 
 ---
 

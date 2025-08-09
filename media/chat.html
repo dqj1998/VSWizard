@@ -179,6 +179,31 @@ code {
         .thinking-flash {
             animation: flash 1s infinite alternate;
         }
+
+        /* Gray block for <think> content and indicator */
+        .think-indicator {
+            display: inline-block;
+            background: #eee;
+            color: #666;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 6px 8px;
+            font-style: italic;
+            margin-bottom: 6px;
+        }
+        .think-block {
+            background: #f3f3f3;
+            color: #333;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 8px 10px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            font-size: 0.95em;
+            margin-bottom: 8px;
+            white-space: pre-wrap;
+            overflow-wrap: break-word;
+            word-wrap: break-word;
+        }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
@@ -192,7 +217,7 @@ code {
     </div>
     <div id="inputarea" style="position:relative;">
         <div id="input-row-top">
-            <input type="text" id="messageinput" placeholder="Type your message...">
+            <textarea id="messageinput" placeholder="Type your message..." rows="3"></textarea>
             <input type="file" id="imageinput" accept="image/*" multiple style="display: none;">
             <button id="sendbutton">Send</button>
         </div>
@@ -402,22 +427,106 @@ code {
         // Streaming support
         let streamingBotMessage = null;
         let streamingBotText = '';
+        // <think> handling state
+        let thinkState = { checkingStart: true, isThinkStream: false, inThink: false };
+        let thinkIndicatorEl = null;
+        let thinkBlockEl = null;
+        let answerBlockEl = null;
+
+        // Helper: decode common HTML entities
+        function decodeEntities(s) {
+            if (!s) return '';
+            return s
+                .replaceAll('<', '<')
+                .replaceAll('>', '>')
+                .replaceAll('&', '&')
+                .replaceAll('"', '"')
+                .replaceAll('\'', "'");
+        }
+
+        // Helper: pick tokens (raw or encoded) if head starts with <think>
+        function chooseThinkTokens(head) {
+            if (head.startsWith('<think>')) {
+                return { open: '<think>', close: '</think>' };
+            }
+            if (head.startsWith('<think>')) {
+                return { open: '<think>', close: '</think>' };
+            }
+            return null;
+        }
 
         function addMessage(text, sender) {
             const messageElement = document.createElement('div');
             messageElement.classList.add('message', `${sender}-message`);
-            messageElement.innerHTML = marked.parse(text); // Use marked to parse Markdown to HTML
+
+            if (sender === 'bot') {
+                const startIdx = text.search(/\S/);
+                if (startIdx !== -1) {
+                    const head = text.slice(startIdx);
+                    const tokens = chooseThinkTokens(head);
+                    if (tokens) {
+                        const closeIdx = text.indexOf(tokens.close, startIdx + tokens.open.length);
+                        const thinkText = closeIdx === -1
+                            ? text.slice(startIdx + tokens.open.length)
+                            : text.slice(startIdx + tokens.open.length, closeIdx);
+                        const answerText = closeIdx === -1 ? '' : text.slice(closeIdx + tokens.close.length);
+
+                        const indicator = document.createElement('div');
+                        indicator.className = 'think-indicator';
+                        indicator.textContent = 'Thinking...';
+
+                        const thinkBlock = document.createElement('div');
+                        thinkBlock.className = 'think-block';
+                        thinkBlock.textContent = decodeEntities(thinkText);
+
+                        const answerBlock = document.createElement('div');
+                        answerBlock.innerHTML = marked.parse(decodeEntities(answerText));
+
+                        if (closeIdx === -1) {
+                            messageElement.appendChild(indicator);
+                        }
+                        messageElement.appendChild(thinkBlock);
+                        messageElement.appendChild(answerBlock);
+                    } else {
+                        messageElement.innerHTML = marked.parse(text);
+                    }
+                } else {
+                    messageElement.innerHTML = marked.parse(text);
+                }
+            } else {
+                messageElement.innerHTML = marked.parse(text);
+            }
+
             chatbox.appendChild(messageElement);
-            chatbox.scrollTop = chatbox.scrollHeight; // Auto-scroll to the latest message
+            chatbox.scrollTop = chatbox.scrollHeight;
         }
 
         function addChunk(text, sender) {
             if (sender !== 'bot') return;
+
             if (!streamingBotMessage) {
                 streamingBotMessage = document.createElement('div');
                 streamingBotMessage.classList.add('message', 'bot-message');
+
+                // Create child containers for think + answer
+                thinkIndicatorEl = document.createElement('div');
+                thinkIndicatorEl.className = 'think-indicator';
+                thinkIndicatorEl.textContent = 'Thinking...';
+                thinkIndicatorEl.style.display = 'none';
+
+                thinkBlockEl = document.createElement('div');
+                thinkBlockEl.className = 'think-block';
+                thinkBlockEl.style.display = 'none';
+
+                answerBlockEl = document.createElement('div');
+
+                streamingBotMessage.appendChild(thinkIndicatorEl);
+                streamingBotMessage.appendChild(thinkBlockEl);
+                streamingBotMessage.appendChild(answerBlockEl);
+
                 chatbox.appendChild(streamingBotMessage);
                 streamingBotText = '';
+                thinkState = { checkingStart: true, isThinkStream: false, inThink: false };
             }
 
             // Helper function to find longest overlap between end of streamingBotText and start of text
@@ -434,13 +543,72 @@ code {
             const overlapLength = findOverlap(streamingBotText, text);
             streamingBotText += text.substring(overlapLength);
 
-            streamingBotMessage.innerHTML = marked.parse(streamingBotText);
+            // Rendering logic with <think> handling
+            const firstNonSpace = streamingBotText.search(/\S/);
+            const head = firstNonSpace === -1 ? '' : streamingBotText.slice(firstNonSpace);
+
+            if (thinkState.checkingStart) {
+                const tokens = chooseThinkTokens(head);
+                if (tokens) {
+                    thinkState.isThinkStream = true;
+                    thinkState.inThink = true;
+                    thinkState.checkingStart = false;
+                } else if (head.length >= 7 || (head && head[0] !== '<' && !head.startsWith('<'))) {
+                    // Decide no-think once enough evidence
+                    thinkState.isThinkStream = false;
+                    thinkState.inThink = false;
+                    thinkState.checkingStart = false;
+                } else {
+                    // Not enough data yet to decide
+                }
+            }
+
+            if (thinkState.isThinkStream) {
+                const tokens = chooseThinkTokens(head) || { open: '<think>', close: '</think>' };
+                const openLen = tokens.open.length;
+                const openStart = firstNonSpace;
+                const contentStart = openStart + openLen;
+                const closeIdx = streamingBotText.indexOf(tokens.close, contentStart);
+
+                if (closeIdx === -1) {
+                    // Still thinking
+                    thinkIndicatorEl.style.display = 'inline-block';
+                    thinkBlockEl.style.display = 'block';
+                    let thinkText = streamingBotText.slice(contentStart);
+                    thinkBlockEl.textContent = decodeEntities(thinkText);
+                    // No answer yet
+                    answerBlockEl.innerHTML = '';
+                } else {
+                    // Think section complete
+                    let thinkText = streamingBotText.slice(contentStart, closeIdx);
+                    let answerText = streamingBotText.slice(closeIdx + tokens.close.length);
+                    thinkIndicatorEl.style.display = 'none';
+                    thinkBlockEl.style.display = 'block';
+                    thinkBlockEl.textContent = decodeEntities(thinkText);
+                    answerBlockEl.innerHTML = marked.parse(decodeEntities(answerText));
+                    thinkState.inThink = false;
+                }
+            } else {
+                // Normal streaming with no <think>
+                thinkIndicatorEl.style.display = 'none';
+                thinkBlockEl.style.display = 'none';
+                answerBlockEl.innerHTML = marked.parse(streamingBotText);
+            }
+
             chatbox.scrollTop = chatbox.scrollHeight;
         }
 
         function finalizeStream() {
+            // If we were showing the "Thinking..." indicator without a close tag, hide it now
+            if (thinkIndicatorEl) {
+                thinkIndicatorEl.style.display = 'none';
+            }
             streamingBotMessage = null;
             streamingBotText = '';
+            thinkState = { checkingStart: true, isThinkStream: false, inThink: false };
+            thinkIndicatorEl = null;
+            thinkBlockEl = null;
+            answerBlockEl = null;
             isStreaming = false;
             setSendButtonToSend();
         }
