@@ -76,7 +76,7 @@ After launching, select **OpenAI** as the provider and start chatting.
 
 ### 0.0.3
 
-Text area input and <think> tag support.
+Text area input and think tag support.
 
 ### 0.0.2
 
