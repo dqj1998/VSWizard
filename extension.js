@@ -27,7 +27,6 @@ const DEFAULT_OPENAI_MODEL = 'gpt-4.1-mini';
  * @param {vscode.ExtensionContext} context
  */
 let chatViewProviderInstance = null;
-let currentSessionId = null; // Track the current session
 
 function getSessions(workspaceState) {
 	return workspaceState.get(VSWIZARD_SESSIONS, []);
@@ -39,16 +38,16 @@ function saveSessions(workspaceState, sessions) {
 
 function getCurrentSession(workspaceState) {
 	const sessions = getSessions(workspaceState);
-	return sessions.find(s => s.id === currentSessionId);
+	const currentId = workspaceState.get(VSWIZARD_CURRENT_SESSION_ID, null);
+	return sessions.find(s => s.id === currentId);
 }
 
 function setCurrentSession(workspaceState, sessionId) {
-	currentSessionId = sessionId;
 	workspaceState.update(VSWIZARD_CURRENT_SESSION_ID, sessionId);
 }
 
 function loadCurrentSessionId(workspaceState) {
-	currentSessionId = workspaceState.get(VSWIZARD_CURRENT_SESSION_ID, null);
+	// Deprecated: currentSessionId is now stored in workspaceState only
 }
 
 async function generateSessionName(ollamaUrl, history, model) {
@@ -355,19 +354,19 @@ class ChatViewProvider {
 		// Get the HTML content for the webview
 		const htmlPath = vscode.Uri.joinPath(this._extensionUri, 'media', 'chat.html');
 		let htmlContent = fs.readFileSync(htmlPath.fsPath, 'utf8');
-
+	
 		// Fix logo path for webview
 		const logoUri = webviewView.webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'vswizard.png'));
 		htmlContent = htmlContent.replace('./vswizard.png', logoUri.toString());
-
+	
 		webviewView.webview.html = htmlContent;
-
+	
 		// Load chat history for current session
-		loadCurrentSessionId(this._workspaceState);
+		const currentId = this._workspaceState.get(VSWIZARD_CURRENT_SESSION_ID, null);
 		let chatHistory = [];
 		const sessions = getSessions(this._workspaceState);
-		if (currentSessionId) {
-			const session = sessions.find(s => s.id === currentSessionId);
+		if (currentId) {
+			const session = sessions.find(s => s.id === currentId);
 			if (session) chatHistory = session.history;
 		}
 		this._workspaceState.update(OLLAMA_CHAT_HISTORY, chatHistory);
@@ -416,7 +415,8 @@ class ChatViewProvider {
 						this._chatHistory = cur_chatHistory;
 
 						const sessions = getSessions(this._workspaceState);
-						const idx = sessions.findIndex(s => s.id === currentSessionId);
+						const currentId = this._workspaceState.get(VSWIZARD_CURRENT_SESSION_ID, null);
+						const idx = currentId ? sessions.findIndex(s => s.id === currentId) : -1;
 						if (idx !== -1) {
 							sessions[idx].history = cur_chatHistory;
 							if (sessions[idx].name === 'New Session' && cur_chatHistory.length === 1) {

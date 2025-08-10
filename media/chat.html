@@ -22,6 +22,25 @@
     border-bottom: 1px solid #ccc;
     margin-top: 10px;
     overflow-x: hidden;
+    position: relative;
+}
+
+.jump-to-latest {
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    display: none;
+    padding: 6px 10px;
+    border-radius: 16px;
+    background: #0078d4;
+    color: #fff;
+    border: none;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    cursor: pointer;
+    font-size: 12px;
+}
+.jump-to-latest:hover {
+    background: #005ea6;
 }
 
         /* Adjusted margin-top */
@@ -216,6 +235,7 @@ code {
     </div>
     <div id="chatbox">
         <!-- Messages will be added here -->
+        <button id="jumpToLatest" class="jump-to-latest" title="Jump to latest">Jump to latest</button>
     </div>
     <div id="inputarea" style="position:relative;">
         <div id="input-row-top">
@@ -244,6 +264,35 @@ code {
         const imageinput = document.getElementById('imageinput');
         const imagebutton = document.getElementById('imagebutton');
         const wizardLogo = document.querySelector('img[alt="VSWizard Logo"]'); // Get the wizard logo
+        
+        // Auto-scroll control
+        const jumpBtn = document.getElementById('jumpToLatest');
+        let autoScrollActive = true;
+        const SCROLL_THRESHOLD = 24;
+
+        function isUserNearBottom() {
+            return chatbox.scrollTop + chatbox.clientHeight >= chatbox.scrollHeight - SCROLL_THRESHOLD;
+        }
+        function updateAutoScrollState() {
+            autoScrollActive = isUserNearBottom();
+            if (jumpBtn) jumpBtn.style.display = autoScrollActive ? 'none' : 'inline-flex';
+        }
+        function scrollToBottom(force = false) {
+            if (force || autoScrollActive) {
+                chatbox.scrollTop = chatbox.scrollHeight;
+            }
+        }
+        if (chatbox) {
+            chatbox.addEventListener('scroll', updateAutoScrollState);
+        }
+        if (jumpBtn) {
+            jumpBtn.addEventListener('click', () => {
+                scrollToBottom(true);
+                updateAutoScrollState();
+            });
+        }
+        // Initialize state
+        updateAutoScrollState();
 
         // Add Shift+Enter to send message
         messageinput.addEventListener('keydown', function (event) {
@@ -396,6 +445,7 @@ code {
                         addMessage(displayText, msg.sender);
                     });
                     setSendButtonToSend();
+                    scrollToBottom(true);
                     // If history is empty, also reset file/image UI
                     if (Array.isArray(message.history) && message.history.length === 0) {
                         if (typeof fileContextSelection !== 'undefined') fileContextSelection = "none";
@@ -420,7 +470,7 @@ code {
                     previewMsg.classList.add('message', 'user-message');
                     previewMsg.innerHTML = `<img src="data:image/png;base64,${message.image}" alt="Selected image" style="max-width:120px;max-height:120px;border-radius:6px;margin:4px 0;vertical-align:middle;box-shadow:0 1px 4px #aaa;display:block;"> <div style='color:#888;font-size:0.95em;'>Image selected. Send your message.</div>`;
                     chatbox.appendChild(previewMsg);
-                    chatbox.scrollTop = chatbox.scrollHeight;
+                    scrollToBottom();
                     break;
                 }
             }
@@ -500,7 +550,11 @@ code {
             }
 
             chatbox.appendChild(messageElement);
-            chatbox.scrollTop = chatbox.scrollHeight;
+            if (sender === 'user') {
+                scrollToBottom(true);
+            } else {
+                scrollToBottom();
+            }
         }
 
         function addChunk(text, sender) {
@@ -597,7 +651,7 @@ code {
                 answerBlockEl.innerHTML = marked.parse(streamingBotText);
             }
 
-            chatbox.scrollTop = chatbox.scrollHeight;
+            scrollToBottom();
         }
 
         function finalizeStream() {
