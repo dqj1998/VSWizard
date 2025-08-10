@@ -52,28 +52,42 @@ function loadCurrentSessionId(workspaceState) {
 }
 
 async function generateSessionName(ollamaUrl, history, model) {
-	// Use LLM to generate a session name from history, max 30 chars
-	const prompt =
-		"Summarize this chat in a short title (max 30 chars):\n" +
-		history.map(m => `${m.sender === 'user' ? 'User' : 'Bot'}: ${m.text}`).join('\n');
+	// Use /api/chat with structured messages; no "User:"/"Bot:" textual prefixes
+	const messages = history.map(m => ({
+		role: m.sender === 'user' ? 'user' : 'assistant',
+		content: m.text
+	}));
+	// Append summarization request as the final user message
+	messages.push({
+		role: 'user',
+		content: 'Summarize this chat in a short title (max 30 chars). Respond with title only, no quotes or trailing punctuation.'
+	});
+
 	const requestBody = {
 		model: model,
-		prompt: prompt,
+		messages,
 		stream: false
 	};
-	const response = await fetch(`${ollamaUrl}/api/generate`, {
+
+	const response = await fetch(`${ollamaUrl}/api/chat`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(requestBody)
 	});
 	if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
 	const data = await response.json();
 	let name = '';
 	if (typeof data === 'object' && data !== null) {
-		if ('response' in data) {
-			name = String(data.response).trim();
-		} else if ('text' in data) {
-			name = String(data.text).trim();
+		// Cast to any for flexible response shape from Ollama /api/chat
+		const anyData = /** @type {any} */ (data);
+		if (anyData.message && typeof anyData.message.content === 'string') {
+			name = String(anyData.message.content).trim();
+		} else if (typeof anyData.response === 'string') {
+			// Fallback for older /api/generate-style responses
+			name = anyData.response.trim();
+		} else if (typeof anyData.text === 'string') {
+			name = anyData.text.trim();
 		}
 	}
 	if (name.length > 30) name = name.slice(0, 30);
@@ -683,20 +697,25 @@ async function handleOllamaChat(providerInstance, images = null) {
 
 	const selectedModel = workspaceState.get(OLLAMA_SELECTED_MODEL);
 	const model = selectedModel ? selectedModel.name : "llama2";
-	const contextLength = selectedModel && selectedModel.context_length ? selectedModel.context_length : 2048;
-	// Build prompt from history, respecting context window size
-	const fullPrompt = buildPromptFromHistory(chatHistory, contextLength);
+
+	// Build chat messages from history (no textual "User:"/"Bot:" prefixes)
+	const messages = chatHistory.map(m => ({
+		role: m.sender === 'user' ? 'user' : 'assistant',
+		content: m.text
+	}));
+
 	const requestBody = {
-		model: model,
-		prompt: fullPrompt,
+		model,
+		messages,
 		stream: true
 	};
 
+	// Attach images for multimodal models if available
 	if (images && Array.isArray(images) && images.length > 0) {
 		requestBody.images = images;
 	}
 
-	const response = await fetch(`${ollamaUrl || 'http://localhost:11434'}/api/generate`, {
+	const response = await fetch(`${ollamaUrl || 'http://localhost:11434'}/api/chat`, {
 		method: 'POST',
 		headers: {
 			'Content-Type': 'application/json',
@@ -730,10 +749,17 @@ async function handleOllamaChat(providerInstance, images = null) {
 
 			try {
 				const data = JSON.parse(jsonLine);
-				if (data.response) {
-					fullResponse += data.response;
-					workspaceState.update(partRespnonseKey, fullResponse);// Pass part response when user breaks the response.
-					webviewView.webview.postMessage({ command: 'addChunk', text: data.response, sender: 'bot' });
+				// Support /api/chat streaming (message.content) and fallback to legacy /api/generate (response)
+				const delta =
+					(data.message && typeof data.message.content === 'string')
+						? data.message.content
+						: (typeof data.response === 'string' ? data.response : '');
+
+				if (delta) {
+					fullResponse += delta;
+					// Pass partial response in case user stops the stream
+					workspaceState.update(partRespnonseKey, fullResponse);
+					webviewView.webview.postMessage({ command: 'addChunk', text: delta, sender: 'bot' });
 				}
 				if (data.done) {
 					webviewView.webview.postMessage({ command: 'streamDone', sender: 'bot' });
@@ -815,29 +841,8 @@ async function listOllamaModels(ollamaUrl) {
 	return modelsWithDetails;
 }
 
-// Helper to build prompt from chat history, respecting contextLength
-function buildPromptFromHistory(chatHistory, contextLength) {
-	// Format: alternating 'User:' and 'Bot:'
-	const formatted = [];
-	for (const msg of chatHistory) {
-		if (msg.sender === 'user') {
-			formatted.push(`User: ${msg.text}`);
-		} else if (msg.sender === 'bot') {
-			formatted.push(`Bot: ${msg.text}`);
-		}
-	}
-	// Add the new user message
-	formatted.push(`User: (Do not prefix your response with "Bot:")`);
-
-	// Start from the end, add messages until contextLength is reached
-	let prompt = '';
-	for (let i = formatted.length - 1; i >= 0; i--) {
-		const next = formatted[i] + '\n';
-		if ((prompt.length + next.length) > contextLength) break;
-		prompt = next + prompt;
-	}
-	return prompt.trim();
-}
+// Deprecated: textual prompt builder removed after migrating to /api/chat with structured messages.
+// The function buildPromptFromHistory was intentionally removed to avoid accidental reuse.
 
 
 // This method is called when your extension is deactivated

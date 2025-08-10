@@ -30,13 +30,15 @@
         }
 
 .user-message {
-    text-align: right;
+    /* Left-align text inside the bubble while keeping the bubble itself on the right */
+    text-align: left;
     margin-left: auto;
     /* Push the bubble to the right */
     max-width: 80%;
     /* Limit bubble width */
     background-color: #333;
-    /* Light green background for user messages */
+    /* Dark bubble for user messages */
+    color: #fff; /* Ensure readable text color on dark background */
     padding: 3px 6px;
     border-radius: 6px;
     margin-bottom: 6px;
